@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin · Pick What We Watch</title>
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/ui.js"></script><script defer src="/admin.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar"><a class="brand" href="/">PICK <span>WHAT WE WATCH</span></a><nav class="nav"><a href="/">Shortlist</a><a href="/vote">Vote</a><a href="/results">Results</a><button class="text-button" id="logout">Log out</button></nav></header>
+    <section class="intro"><div class="eyebrow">Household host</div><h1>Admin settings.</h1><p>Connect your media sources and manage the shortlist.</p></section>
+    <form id="settings-form" class="panel">
+      <h2>Plex library</h2>
+      <div class="admin-grid">
+        <label class="field">Plex Server URL<input id="plex-url" type="url" placeholder="http://192.168.1.10:32400"></label>
+        <label class="field">X-Plex-Token<input id="plex-token" type="password" autocomplete="off"></label>
+      </div>
+      <label class="field">Library Section IDs <small>Comma-separated section IDs for Movie and TV Show libraries. TV syncs at series level.</small><input id="plex-sections" type="text" placeholder="1, 2"></label>
+      <label class="field">Plex Labels <small>Optional, comma-separated. If provided, only matching labeled titles sync.</small><input id="plex-labels" type="text" placeholder="family, approved"></label>
+      <button id="sync-plex" class="button secondary" type="button">Sync Plex Libraries</button>
+      <h2 style="margin-top:30px">TMDB and streaming</h2>
+      <label class="field">TMDB API Key<input id="tmdb-key" type="password" autocomplete="off"></label>
+      <p class="muted">Show only titles available to stream in the US on selected services.</p>
+      <div id="provider-checks" class="checks"></div>
+      <p id="settings-status" class="status" aria-live="polite"></p>
+      <button class="button" type="submit">Save settings</button>
+    </form>
+    <section class="panel">
+      <h2>Voting</h2>
+      <p id="voting-state" class="muted"></p>
+      <button id="toggle-voting" class="button secondary" type="button"></button>
+      <a class="button secondary" href="/results" style="margin-left:7px">View results</a>
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Active shortlist</h2><span id="shortlist-count" class="muted"></span></div>
+      <div id="admin-shortlist"></div>
+      <button id="clear-shortlist" class="button danger" type="button">Clear shortlist and ballots</button>
+    </section>
+    <footer>TMDB data attribution: This product uses the TMDB API but is not endorsed or certified by TMDB.</footer>
+  </main>
+</body>
+</html>

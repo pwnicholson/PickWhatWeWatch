@@ -1,0 +1,267 @@
+require('dotenv').config();
+const path = require('node:path');
+const express = require('express');
+const session = require('express-session');
+const db = require('./db');
+const { syncLibraries, plexRequest } = require('./plex');
+const tmdb = require('./tmdb');
+
+if (!process.env.ADMIN_PIN || !process.env.SESSION_SECRET) {
+  throw new Error('Set ADMIN_PIN and SESSION_SECRET in your .env file.');
+}
+
+const app = express();
+const port = Number(process.env.PORT) || 3000;
+const providers = [
+  ['Netflix', 8], ['Disney+', 337], ['Hulu', 15], ['Max', 1899],
+  ['Prime Video', 9], ['Apple TV+', 350], ['Peacock', 386], ['Paramount+', 531]
+];
+
+app.use(express.json({ limit: '100kb' }));
+app.use(session({
+  name: 'watch-night-admin',
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: { httpOnly: true, sameSite: 'strict', maxAge: 8 * 60 * 60 * 1000 }
+}));
+
+function getSetting(key, fallback = '') {
+  return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? fallback;
+}
+
+function setSetting(key, value) {
+  db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
+    .run(key, String(value));
+}
+
+function config() {
+  let activeProviders = [];
+  try { activeProviders = JSON.parse(getSetting('providers', '[]')); } catch { activeProviders = []; }
+  return {
+    serverUrl: getSetting('plex_url').trim().replace(/\/+$/, ''),
+    plexToken: getSetting('plex_token'),
+    sectionIds: getSetting('plex_sections'),
+    labels: getSetting('plex_labels').split(',').map(value => value.trim().toLowerCase()).filter(Boolean),
+    tmdbKey: getSetting('tmdb_key'),
+    providers: activeProviders
+  };
+}
+
+function adminOnly(req, res, next) {
+  if (req.session?.admin) return next();
+  res.status(401).json({ error: 'Admin PIN required.' });
+}
+
+function asyncRoute(handler) {
+  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+}
+
+app.post('/api/admin/login', (req, res) => {
+  if (String(req.body?.pin || '') !== process.env.ADMIN_PIN) {
+    return res.status(401).json({ error: 'Incorrect PIN.' });
+  }
+  req.session.regenerate(error => {
+    if (error) return res.status(500).json({ error: 'Could not create an admin session.' });
+    req.session.admin = true;
+    req.session.save(saveError => {
+      if (saveError) return res.status(500).json({ error: 'Could not save the admin session.' });
+      res.json({ ok: true });
+    });
+  });
+});
+
+app.post('/api/admin/logout', adminOnly, (req, res) => {
+  req.session.destroy(error => {
+    if (error) return res.status(500).json({ error: 'Could not end the admin session.' });
+    res.clearCookie('watch-night-admin');
+    res.json({ ok: true });
+  });
+});
+
+app.get('/api/admin/session', (req, res) => res.json({ authenticated: Boolean(req.session?.admin) }));
+app.get('/api/admin/settings', adminOnly, (req, res) => {
+  const c = config();
+  res.json({
+    plexUrl: c.serverUrl, plexToken: c.plexToken, sectionIds: c.sectionIds,
+    labels: getSetting('plex_labels'), tmdbKey: c.tmdbKey,
+    providers: c.providers, providerOptions: providers,
+    votingClosed: getSetting('voting_closed', 'false') === 'true'
+  });
+});
+
+app.post('/api/admin/settings', adminOnly, (req, res) => {
+  const body = req.body || {};
+  const chosen = Array.isArray(body.providers) ? body.providers.map(Number) : [];
+  const allowed = new Set(providers.map(([, id]) => id));
+  if (chosen.some(id => !allowed.has(id))) return res.status(400).json({ error: 'Invalid streaming provider selection.' });
+  for (const [key, value] of Object.entries({
+    plex_url: String(body.plexUrl || '').trim(),
+    plex_token: String(body.plexToken || '').trim(),
+    plex_sections: String(body.sectionIds || '').trim(),
+    plex_labels: String(body.labels || '').trim(),
+    tmdb_key: String(body.tmdbKey || '').trim(),
+    providers: JSON.stringify([...new Set(chosen)])
+  })) setSetting(key, value);
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/sync', adminOnly, asyncRoute(async (req, res) => {
+  const count = await syncLibraries(config());
+  res.json({ count });
+}));
+
+app.post('/api/admin/voting', adminOnly, (req, res) => {
+  setSetting('voting_closed', req.body?.closed ? 'true' : 'false');
+  res.json({ closed: req.body?.closed === true });
+});
+
+app.delete('/api/admin/shortlist/:id', adminOnly, (req, res) => {
+  db.prepare('DELETE FROM shortlist WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/admin/shortlist', adminOnly, (req, res) => {
+  db.prepare('DELETE FROM shortlist').run();
+  db.prepare('DELETE FROM ballots').run();
+  res.json({ ok: true });
+});
+
+app.get('/api/status', (req, res) => res.json({
+  votingClosed: getSetting('voting_closed', 'false') === 'true',
+  shortlistCount: db.prepare('SELECT count(*) AS count FROM shortlist').get().count
+}));
+
+app.get('/api/search', asyncRoute(async (req, res) => {
+  const query = String(req.query.q || '').trim();
+  if (query.length < 2) return res.json([]);
+  const needle = `%${query.replace(/[\\%_]/g, '\\$&')}%`;
+  const plex = db.prepare(`SELECT id, title, type, year, poster, summary
+    FROM plex_titles WHERE title LIKE ? ESCAPE '\\' ORDER BY title LIMIT 30`).all(needle)
+    .map(item => ({ ...item, source: 'plex', sourceId: item.id }));
+  const remote = await tmdb.search(query, config());
+  const present = new Set(plex.map(item => item.title.toLowerCase()));
+  res.json([...plex, ...remote.filter(item => !present.has(item.title.toLowerCase()))]);
+}));
+
+app.get('/api/title', asyncRoute(async (req, res) => {
+  const source = String(req.query.source || '');
+  const id = String(req.query.id || '');
+  if (source === 'plex') {
+    const item = db.prepare('SELECT * FROM plex_titles WHERE id = ?').get(id);
+    if (!item) return res.status(404).json({ error: 'Plex title not found.' });
+    return res.json({ ...item, source, sourceId: item.id, genres: JSON.parse(item.genres || '[]') });
+  }
+  if (source === 'tmdb') {
+    const match = id.match(/^(movie|tv):(\d+)$/);
+    if (!match) return res.status(400).json({ error: 'Invalid TMDB title ID.' });
+    if (!config().tmdbKey) return res.status(400).json({ error: 'TMDB is not configured by the admin.' });
+    return res.json(await tmdb.details(match[1], match[2], config()));
+  }
+  res.status(400).json({ error: 'Unknown title source.' });
+}));
+
+app.get('/api/plex-image', asyncRoute(async (req, res) => {
+  const imagePath = String(req.query.path || '');
+  if (!/^\/library\/metadata\/[\w-]+\/thumb\/[\w.-]+$/.test(imagePath)) {
+    return res.status(400).json({ error: 'Invalid Plex image path.' });
+  }
+  const c = config();
+  if (!c.serverUrl || !c.plexToken) return res.status(503).json({ error: 'Plex is not configured.' });
+  const url = new URL(imagePath, c.serverUrl);
+  url.searchParams.set('X-Plex-Token', c.plexToken);
+  const response = await fetch(url);
+  if (!response.ok) return res.status(response.status).end();
+  res.set('Content-Type', response.headers.get('content-type') || 'image/jpeg');
+  res.set('Cache-Control', 'private, max-age=3600');
+  res.send(Buffer.from(await response.arrayBuffer()));
+}));
+
+app.get('/api/shortlist', (req, res) => {
+  res.json(db.prepare('SELECT id,source,source_id AS sourceId,title,type,year,poster FROM shortlist ORDER BY title COLLATE NOCASE').all());
+});
+
+app.post('/api/shortlist', (req, res) => {
+  if (getSetting('voting_closed', 'false') === 'true') return res.status(403).json({ error: 'Shortlist editing is closed.' });
+  const { source, sourceId, title, type, year, poster } = req.body || {};
+  if (!['plex', 'tmdb'].includes(source) || !sourceId || !title || !['movie', 'tv'].includes(type)) {
+    return res.status(400).json({ error: 'Incomplete title information.' });
+  }
+  if (db.prepare('SELECT 1 FROM shortlist WHERE source=? AND source_id=?').get(source, String(sourceId))) {
+    return res.status(409).json({ error: 'That title is already shortlisted.' });
+  }
+  if (db.prepare('SELECT count(*) AS count FROM shortlist').get().count >= 20) {
+    return res.status(409).json({ error: 'The shortlist is full (20 titles maximum).' });
+  }
+  const id = `${source}:${sourceId}`;
+  db.prepare(`INSERT INTO shortlist (id,source,source_id,title,type,year,poster)
+    VALUES (?,?,?,?,?,?,?)`).run(id, source, String(sourceId), String(title), type, Number(year) || null, String(poster || ''));
+  res.status(201).json({ id });
+});
+
+app.get('/api/ballot', (req, res) => {
+  const voter = String(req.query.voter || '').trim().slice(0, 60);
+  const ballot = voter ? db.prepare('SELECT ranks,approvals,vetoes FROM ballots WHERE voter=? COLLATE NOCASE').get(voter) : null;
+  res.json(ballot ? {
+    ranks: JSON.parse(ballot.ranks), approvals: JSON.parse(ballot.approvals), vetoes: JSON.parse(ballot.vetoes)
+  } : { ranks: [], approvals: [], vetoes: [] });
+});
+
+app.post('/api/ballot', (req, res) => {
+  if (getSetting('voting_closed', 'false') === 'true') return res.status(403).json({ error: 'Voting is closed.' });
+  const voter = String(req.body?.voter || '').trim().slice(0, 60);
+  const ranks = Array.isArray(req.body?.ranks) ? req.body.ranks.map(String) : [];
+  const approvals = Array.isArray(req.body?.approvals) ? [...new Set(req.body.approvals.map(String))] : [];
+  const vetoes = Array.isArray(req.body?.vetoes) ? [...new Set(req.body.vetoes.map(String))] : [];
+  if (!voter) return res.status(400).json({ error: 'Enter your name before voting.' });
+  if (ranks.length > 3 || new Set(ranks).size !== ranks.length) return res.status(400).json({ error: 'Choose up to three distinct ranked titles.' });
+  const ids = new Set(db.prepare('SELECT id FROM shortlist').all().map(row => row.id));
+  if ([...ranks, ...approvals, ...vetoes].some(id => !ids.has(id))) return res.status(400).json({ error: 'Your ballot contains a title no longer on the shortlist.' });
+  db.prepare(`INSERT INTO ballots (voter,ranks,approvals,vetoes,updated_at) VALUES (?,?,?,?,?)
+    ON CONFLICT(voter) DO UPDATE SET ranks=excluded.ranks,approvals=excluded.approvals,
+    vetoes=excluded.vetoes,updated_at=excluded.updated_at`)
+    .run(voter, JSON.stringify(ranks), JSON.stringify(approvals), JSON.stringify(vetoes), new Date().toISOString());
+  res.json({ ok: true });
+});
+
+app.get('/api/results', (req, res) => {
+  const titles = db.prepare('SELECT id,title,type,year,poster,source,source_id AS sourceId FROM shortlist').all();
+  const ballots = db.prepare('SELECT voter,ranks,approvals,vetoes FROM ballots').all();
+  const results = titles.map(title => {
+    let score = 0, first = 0, second = 0;
+    const willing = new Set(), vetoedBy = [];
+    for (const ballot of ballots) {
+      const ranks = JSON.parse(ballot.ranks);
+      const approvals = JSON.parse(ballot.approvals);
+      const vetoes = JSON.parse(ballot.vetoes);
+      const rank = ranks.indexOf(title.id);
+      if (rank === 0) { score += 3; first++; }
+      if (rank === 1) { score += 2; second++; }
+      if (rank === 2) score += 1;
+      if (rank >= 0 || approvals.includes(title.id)) willing.add(ballot.voter);
+      if (vetoes.includes(title.id)) { score -= 5; vetoedBy.push(ballot.voter); }
+    }
+    return { ...title, score, willing: willing.size, voters: ballots.length, first, second, vetoedBy };
+  });
+  results.sort((a, b) => b.score - a.score || b.willing - a.willing || b.first - a.first || b.second - a.second || a.title.localeCompare(b.title));
+  res.json({ results, voters: ballots.length });
+});
+
+app.get('/admin', (req, res, next) => {
+  if (!req.session?.admin) return res.sendFile(path.join(__dirname, 'public', 'admin-login.html'));
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'), error => error && next(error));
+});
+app.get('/admin.html', (req, res) => res.redirect('/admin'));
+app.use(express.static(path.join(__dirname, 'public')));
+app.get(['/vote', '/results'], (req, res) => res.sendFile(path.join(__dirname, 'public', `${req.path.slice(1)}.html`)));
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+
+app.use((error, req, res, next) => {
+  console.error(error);
+  if (res.headersSent) return next(error);
+  res.status(500).json({ error: error.message || 'Internal server error.' });
+});
+
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Pick What We Watch is running at http://0.0.0.0:${port}`);
+});

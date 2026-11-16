@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin · Pick What We Watch</title><link rel="stylesheet" href="/style.css">
+  <script defer src="/ui.js"></script><script defer src="/admin-login.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar"><a class="brand" href="/">PICK <span>WHAT WE WATCH</span></a><nav class="nav"><a href="/">Shortlist</a></nav></header>
+    <section class="panel" style="max-width:440px;margin:12vh auto">
+      <div class="eyebrow">Admin settings</div><h1 style="font-size:2rem;margin-top:8px">Enter PIN</h1>
+      <form id="login-form"><label class="field">Admin PIN<input id="pin" type="password" inputmode="numeric" autocomplete="current-password" required></label><button class="button" type="submit">Continue</button></form>
+      <p id="login-status" class="status" aria-live="polite"></p>
+    </section>
+  </main>
+</body>
+</html>
