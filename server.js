@@ -1,9 +1,10 @@
 require('dotenv').config();
+const { randomUUID } = require('node:crypto');
 const path = require('node:path');
 const express = require('express');
 const session = require('express-session');
 const db = require('./db');
-const { syncLibraries, plexRequest } = require('./plex');
+const { createPin, getLabels, getLibraries, plexServers, pollPin, syncLibraries } = require('./plex');
 const tmdb = require('./tmdb');
 
 if (!process.env.ADMIN_PIN || !process.env.SESSION_SECRET) {
@@ -33,6 +34,15 @@ function getSetting(key, fallback = '') {
 function setSetting(key, value) {
   db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
     .run(key, String(value));
+}
+
+function getPlexClientId() {
+  let clientId = getSetting('plex_client_id');
+  if (!clientId) {
+    clientId = randomUUID();
+    setSetting('plex_client_id', clientId);
+  }
+  return clientId;
 }
 
 function config() {
@@ -84,11 +94,52 @@ app.get('/api/admin/settings', adminOnly, (req, res) => {
   const c = config();
   res.json({
     plexUrl: c.serverUrl, plexToken: c.plexToken, sectionIds: c.sectionIds,
+    plexOAuth: Boolean(getSetting('plex_client_id')),
     labels: getSetting('plex_labels'), tmdbKey: c.tmdbKey,
     providers: c.providers, providerOptions: providers,
     votingClosed: getSetting('voting_closed', 'false') === 'true'
   });
 });
+
+app.post('/api/plex/auth/start', adminOnly, asyncRoute(async (req, res) => {
+  const clientId = getPlexClientId();
+  const pin = await createPin(clientId);
+  if (!pin?.id || !pin?.code) throw new Error('Plex did not return an authentication PIN.');
+  req.session.plexPinId = String(pin.id);
+  res.json({
+    pinId: String(pin.id),
+    code: String(pin.code),
+    clientId,
+    expiresIn: Number(pin.expiresIn) || 600
+  });
+}));
+
+app.get('/api/plex/auth/poll/:pinId', adminOnly, asyncRoute(async (req, res) => {
+  const pinId = String(req.params.pinId);
+  if (!/^\d+$/.test(pinId) || req.session.plexPinId !== pinId) {
+    return res.status(403).json({ error: 'This Plex PIN was not started in this admin session.' });
+  }
+  const result = await pollPin(pinId, getPlexClientId());
+  if (!result.authToken) return res.json({ authorized: false });
+  setSetting('plex_token', result.authToken);
+  delete req.session.plexPinId;
+  res.json({ authorized: true });
+}));
+
+app.get('/api/plex/servers', adminOnly, asyncRoute(async (req, res) => {
+  res.json({ servers: await plexServers(config().plexToken, getPlexClientId()) });
+}));
+
+app.get('/api/plex/libraries', adminOnly, asyncRoute(async (req, res) => {
+  res.json({ libraries: await getLibraries(config()) });
+}));
+
+app.get('/api/plex/labels', adminOnly, asyncRoute(async (req, res) => {
+  const sectionIds = String(req.query.sectionIds || config().sectionIds)
+    .split(',').map(value => value.trim()).filter(Boolean);
+  if (!sectionIds.length) return res.status(400).json({ error: 'Select at least one library first.' });
+  res.json({ labels: await getLabels(sectionIds, config()) });
+}));
 
 app.post('/api/admin/settings', adminOnly, (req, res) => {
   const body = req.body || {};

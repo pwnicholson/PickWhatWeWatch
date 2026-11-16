@@ -5,7 +5,20 @@ const Database = require('better-sqlite3');
 const dataDir = path.join(__dirname, 'data');
 fs.mkdirSync(dataDir, { recursive: true });
 
-const db = new Database(path.join(dataDir, 'watch-night.sqlite'));
+const dbPath = path.join(dataDir, 'watch-night.sqlite');
+for (const filePath of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`, `${dbPath}-journal`]) {
+  if (!fs.existsSync(filePath)) continue;
+  const mode = fs.statSync(filePath).mode;
+  if ((mode & 0o222) === 0) {
+    try {
+      fs.chmodSync(filePath, mode | 0o600);
+    } catch (error) {
+      throw new Error(`SQLite file is read-only and could not be made writable: ${filePath}`, { cause: error });
+    }
+  }
+}
+
+const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 db.exec(`

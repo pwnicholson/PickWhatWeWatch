@@ -14,7 +14,7 @@ A lightweight family movie and TV voting app. Requires Node.js 22 or newer.
    ```
 
 3. Open `http://localhost:3000` or `http://<this-PC-LAN-IP>:3000` on your home network. Allow Node.js through Windows Firewall for private networks if prompted.
-4. Visit `/admin` to configure Plex, TMDB, streaming services, and voting.
+4. Visit `/admin` to connect Plex with its PIN sign-in, choose your server and libraries, configure TMDB and streaming services, and manage voting. Manual Plex token and server URL entry remains available as a fallback.
 
 The server binds to `0.0.0.0` on port 3000 by default. Set `PORT` in `.env` to change it. App data is stored in `data/watch-night.sqlite`.
 

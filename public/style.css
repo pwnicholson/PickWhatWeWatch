@@ -82,6 +82,10 @@ p { color: var(--muted); line-height: 1.6; }
 .checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
 .checks label { display: flex; align-items: center; gap: 9px; padding: 10px; background: #131722; border: 1px solid var(--line); border-radius: 10px; }
 .checks input { accent-color: var(--accent); }
+.checks .label-check { width: fit-content; border-radius: 99px; padding: 8px 12px; }
+.manual-plex { margin: 20px 0 8px; border-top: 1px solid var(--line); padding-top: 16px; }
+.manual-plex summary { cursor: pointer; color: var(--muted); }
+.manual-plex[open] summary { margin-bottom: 14px; color: var(--accent); }
 .modal-backdrop { position: fixed; inset: 0; z-index: 20; display: none; place-items: center; padding: 16px; background: #05070bd9; }
 .modal-backdrop.open { display: grid; }
 .modal { position: relative; width: min(100%, 720px); max-height: min(92vh, 850px); overflow: auto; border: 1px solid var(--line); border-radius: 20px; background: #1a1f2b; }

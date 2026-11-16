@@ -12,13 +12,34 @@
     <section class="intro"><div class="eyebrow">Household host</div><h1>Admin settings.</h1><p>Connect your media sources and manage the shortlist.</p></section>
     <form id="settings-form" class="panel">
       <h2>Plex library</h2>
-      <div class="admin-grid">
-        <label class="field">Plex Server URL<input id="plex-url" type="url" placeholder="http://192.168.1.10:32400"></label>
-        <label class="field">X-Plex-Token<input id="plex-token" type="password" autocomplete="off"></label>
+      <div class="toolbar">
+        <button id="connect-plex" class="button" type="button">Connect with Plex</button>
+        <span id="plex-auth-status" class="status" aria-live="polite"></span>
       </div>
-      <label class="field">Library Section IDs <small>Comma-separated section IDs for Movie and TV Show libraries. TV syncs at series level.</small><input id="plex-sections" type="text" placeholder="1, 2"></label>
-      <label class="field">Plex Labels <small>Optional, comma-separated. If provided, only matching labeled titles sync.</small><input id="plex-labels" type="text" placeholder="family, approved"></label>
-      <button id="sync-plex" class="button secondary" type="button">Sync Plex Libraries</button>
+      <label class="field">Plex Server
+        <select id="plex-server"><option value="">Connect to Plex to choose a server</option></select>
+        <small>Local network connections are preferred when available.</small>
+      </label>
+      <input id="plex-sections" type="hidden">
+      <div class="field">Libraries to sync <small>Select Movie and TV Show libraries. TV syncs at series level.</small></div>
+      <div id="library-checks" class="checks"></div>
+      <p id="library-status" class="status" aria-live="polite"></p>
+      <div class="toolbar">
+        <button id="load-libraries" class="button secondary" type="button">Load Libraries</button>
+        <button id="sync-plex" class="button secondary" type="button">Sync Plex Libraries</button>
+      </div>
+      <label class="field">Plex Label filter <small>Optional. If selected, only titles matching these labels sync.</small></label>
+      <input id="plex-labels" type="hidden">
+      <div id="label-checks" class="checks"></div>
+      <p id="label-status" class="status" aria-live="polite"></p>
+      <button id="load-labels" class="button secondary" type="button">Load Available Labels</button>
+      <details class="manual-plex">
+        <summary>Manual Token / Server URL fallback</summary>
+        <div class="admin-grid">
+          <label class="field">Plex Server URL<input id="plex-url" type="url" placeholder="http://192.168.1.10:32400"></label>
+          <label class="field">X-Plex-Token<input id="plex-token" type="password" autocomplete="off"></label>
+        </div>
+      </details>
       <h2 style="margin-top:30px">TMDB and streaming</h2>
       <label class="field">TMDB API Key<input id="tmdb-key" type="password" autocomplete="off"></label>
       <p class="muted">Show only titles available to stream in the US on selected services.</p>
