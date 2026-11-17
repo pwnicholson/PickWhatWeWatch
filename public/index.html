@@ -13,15 +13,19 @@
   <main class="shell">
     <header class="topbar">
       <a class="brand" href="/">PICK <span>WHAT WE WATCH</span></a>
-      <nav class="nav"><a href="/vote">Vote</a><a href="/results">Results</a><a class="admin-link" href="/admin">Admin</a></nav>
+      <nav class="nav"><a class="nav-action" href="/vote">Vote Now</a><a href="/results">Results</a><a class="admin-link" href="/admin">Admin</a></nav>
     </header>
     <section class="intro">
       <div class="eyebrow">Family movie & TV night</div>
       <h1>Find something<br>we all want to watch.</h1>
       <p>Search your Plex library and streaming services, then build tonight’s shortlist together.<br><span id="welcome"></span> <button class="text-button" id="change-name">Change name</button></p>
     </section>
+    <aside id="source-setup-banner" class="source-banner" hidden>
+      <span>No media sources are configured yet.</span> <a href="/admin">Set up Plex, TMDB, or OMDb</a>
+    </aside>
     <section>
       <label class="search-wrap"><span class="search-icon">⌕</span><input id="search" class="search-input" type="search" placeholder="Search movies and TV shows…" autocomplete="off"></label>
+      <p id="shortlist-full-note" class="full-list-note" hidden>This list is already full! To add more, ask an Admin to remove something first.</p>
       <p id="search-status" class="status" aria-live="polite"></p>
       <div id="search-results" class="grid"></div>
     </section>

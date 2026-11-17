@@ -40,7 +40,7 @@ async function omdbDetails(title, year, imdbId, key) {
 
 async function enrichShortlist(item, config) {
   const plex = item.source === 'plex'
-    ? db.prepare('SELECT genres,cast_top2,director FROM plex_titles WHERE id=?').get(item.sourceId)
+    ? db.prepare('SELECT poster,summary,rating,genres,cast_top2,director FROM plex_titles WHERE id=?').get(item.sourceId)
     : null;
   let tmdbItem = null;
   if (config.tmdbKey) {
@@ -63,6 +63,9 @@ async function enrichShortlist(item, config) {
   imdbId = omdbItem?.imdbId || imdbId;
 
   return {
+    poster: tmdbItem?.poster || plex?.poster || '',
+    summary: tmdbItem?.summary || plex?.summary || '',
+    content_rating: tmdbItem?.rating || plex?.rating || '',
     genres: JSON.stringify(genres),
     cast_top2: JSON.stringify(castTop2),
     director,

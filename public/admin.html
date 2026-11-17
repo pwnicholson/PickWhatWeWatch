@@ -8,72 +8,94 @@
 </head>
 <body>
   <main class="shell">
-    <header class="topbar"><a class="brand" href="/">PICK <span>WHAT WE WATCH</span></a><nav class="nav"><a href="/">Shortlist</a><a href="/vote">Vote</a><a href="/results">Results</a><button class="text-button" id="logout">Log out</button></nav></header>
+    <header class="topbar"><a class="brand" href="/">PICK <span>WHAT WE WATCH</span></a><nav class="nav"><a class="nav-action" href="/">Add To Shortlist</a><a href="/vote">Vote</a><a href="/results">Results</a><a class="admin-link" href="/admin">Admin</a><button class="text-button" id="logout">Log out</button></nav></header>
     <section class="intro"><div class="eyebrow">Household host</div><h1>Admin settings.</h1><p>Connect your media sources and manage the shortlist.</p></section>
     <form id="settings-form" class="panel">
-      <h2>Plex library</h2>
-      <div class="toolbar">
-        <button id="connect-plex" class="button" type="button">Connect with Plex</button>
-        <span id="plex-auth-status" class="status" aria-live="polite"></span>
-      </div>
-      <label class="field">Plex Server
-        <select id="plex-server"><option value="">Connect to Plex to choose a server</option></select>
-        <small>Local network connections are preferred when available.</small>
-      </label>
-      <input id="plex-sections" type="hidden">
-      <div class="field">Libraries to sync <small>Select Movie and TV Show libraries. TV syncs at series level.</small></div>
-      <div id="library-checks" class="checks"></div>
-      <p id="library-status" class="status" aria-live="polite"></p>
-      <p id="plex-stats" class="status" aria-live="polite">Library Cache: loading…</p>
-      <div class="toolbar">
-        <button id="load-libraries" class="button secondary" type="button">Load Libraries</button>
-        <button id="sync-plex" class="button secondary" type="button">Sync Plex Libraries</button>
-      </div>
-      <label class="field">Plex Label filter <small>Optional. If selected, only titles matching these labels sync.</small></label>
-      <input id="plex-labels" type="hidden">
-      <div id="label-checks" class="checks"></div>
-      <p id="label-status" class="status" aria-live="polite"></p>
-      <button id="load-labels" class="button secondary" type="button">Load Available Labels</button>
-      <details class="manual-plex">
-        <summary>Manual Token / Server URL fallback</summary>
-        <div class="admin-grid">
-          <label class="field">Plex Server URL<input id="plex-url" type="url" placeholder="http://192.168.1.10:32400"></label>
-          <label class="field">X-Plex-Token<input id="plex-token" type="password" autocomplete="off"></label>
+      <details class="source-card" open>
+        <summary><span class="source-title">Step 1: Plex Media Server (Optional)</span><span id="plex-source-status" class="source-pill">Optional - Not Configured</span></summary>
+        <p class="source-description">Enables searching and voting on movies and TV shows from your personal Plex libraries.</p>
+        <div class="toolbar">
+          <button id="connect-plex" class="button" type="button">Connect with Plex</button>
+          <span id="plex-auth-status" class="status" aria-live="polite"></span>
         </div>
+        <label class="field">Plex Server
+          <select id="plex-server"><option value="">Connect to Plex to choose a server</option></select>
+          <small>Local network connections are preferred when available.</small>
+        </label>
+        <input id="plex-sections" type="hidden">
+        <div class="field">Libraries to sync <small>Select Movie and TV Show libraries. TV syncs at series level.</small></div>
+        <div id="library-checks" class="checks"></div>
+        <p id="library-status" class="status" aria-live="polite"></p>
+        <p id="plex-stats" class="status" aria-live="polite">Library Cache: loading…</p>
+        <div class="toolbar">
+          <button id="load-libraries" class="button secondary" type="button">Load Libraries</button>
+          <button id="sync-plex" class="button secondary" type="button">Sync Plex Libraries</button>
+        </div>
+        <label class="field">Plex Label filter <small>Optional. If selected, only titles matching these labels sync.</small></label>
+        <input id="plex-labels" type="hidden">
+        <div id="label-checks" class="checks"></div>
+        <p id="label-status" class="status" aria-live="polite"></p>
+        <button id="load-labels" class="button secondary" type="button">Load Available Labels</button>
+        <details class="manual-plex">
+          <summary>Manual Token / Server URL fallback</summary>
+          <div class="admin-grid">
+            <label class="field">Plex Server URL<input id="plex-url" type="url" placeholder="http://192.168.1.10:32400"></label>
+            <label class="field">X-Plex-Token<input id="plex-token" type="password" autocomplete="off"></label>
+          </div>
+        </details>
       </details>
-      <h2 style="margin-top:30px">TMDB and streaming</h2>
-      <label class="field">TMDB API Key<input id="tmdb-key" type="password" autocomplete="off"></label>
-      <label class="field">OMDb API Key (optional)<input id="omdb-key" type="password" autocomplete="off"></label>
-      <p class="muted">Show only titles available to stream in the US on selected services.</p>
-      <div id="provider-checks" class="checks"></div>
-      <h2 style="margin-top:30px">Content Rating Filters (Optional)</h2>
-      <div class="admin-grid rating-filters">
-        <div>
-          <label class="field">Max Movie Rating
-            <select id="max-movie-rating">
-              <option value="G">G (G only)</option>
-              <option value="PG">PG (Up to PG)</option>
-              <option value="PG-13">PG-13 (Up to PG-13)</option>
-              <option value="R">R (Up to R)</option>
-              <option value="ALL">ALL (All / No Limit, including NC-17)</option>
-            </select>
-          </label>
-          <label class="rating-unrated"><input id="include-unrated-movies" type="checkbox"> Display unrated / NR movies</label>
-        </div>
-        <div>
-          <label class="field">Max TV Show Rating
-            <select id="max-tv-rating">
-              <option value="TV-Y">TV-Y (TV-Y only)</option>
-              <option value="TV-Y7">TV-Y7 (Up to TV-Y7)</option>
-              <option value="TV-G">TV-G (Up to TV-G)</option>
-              <option value="TV-PG">TV-PG (Up to TV-PG)</option>
-              <option value="TV-14">TV-14 (Up to TV-14)</option>
-              <option value="ALL">ALL (All / No Limit, including TV-MA)</option>
-            </select>
-          </label>
-          <label class="rating-unrated"><input id="include-unrated-tv" type="checkbox" checked> Display unrated / NR TV shows</label>
-        </div>
-      </div>
+      <details class="source-card" open>
+        <summary><span class="source-title">Step 2: Streaming Services via TMDB (Optional)</span><span id="tmdb-source-status" class="source-pill">Optional - Not Configured</span></summary>
+        <p class="source-description">Enables searching movies and TV shows available on your active streaming subscriptions (Netflix, Disney+, Hulu, Max, etc.) and enriches Plex titles with cast/director credits.</p>
+        <ol class="setup-steps">
+          <li>Create a free account at <a href="https://www.themoviedb.org/signup" target="_blank" rel="noopener noreferrer">themoviedb.org/signup</a>.</li>
+          <li>Go to <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer">the TMDB API settings</a> and click <strong>Request an API Key</strong>.</li>
+          <li>Select <strong>Developer</strong> (free for personal/non-commercial use), enter any app name and <code>http://localhost:3000</code> as the URL, then copy the <strong>API Key (v3 auth)</strong> below.</li>
+        </ol>
+        <label class="field">TMDB API Key<input id="tmdb-key" type="password" autocomplete="off"></label>
+        <p class="muted">Show titles available to stream in the US on selected services.</p>
+        <div id="provider-checks" class="checks"></div>
+        <section class="rating-section">
+          <h3>Content Rating Filters (Optional)</h3>
+          <p class="muted">These limits apply to both Plex and streaming search results.</p>
+          <div class="admin-grid rating-filters">
+            <div>
+              <label class="field">Max Movie Rating
+                <select id="max-movie-rating">
+                  <option value="G">G (G only)</option>
+                  <option value="PG">PG (Up to PG)</option>
+                  <option value="PG-13">PG-13 (Up to PG-13)</option>
+                  <option value="R">R (Up to R)</option>
+                  <option value="ALL">ALL (All / No Limit, including NC-17)</option>
+                </select>
+              </label>
+              <label class="rating-unrated"><input id="include-unrated-movies" type="checkbox"> Display unrated / NR movies</label>
+            </div>
+            <div>
+              <label class="field">Max TV Show Rating
+                <select id="max-tv-rating">
+                  <option value="TV-Y">TV-Y (TV-Y only)</option>
+                  <option value="TV-Y7">TV-Y7 (Up to TV-Y7)</option>
+                  <option value="TV-G">TV-G (Up to TV-G)</option>
+                  <option value="TV-PG">TV-PG (Up to TV-PG)</option>
+                  <option value="TV-14">TV-14 (Up to TV-14)</option>
+                  <option value="ALL">ALL (All / No Limit, including TV-MA)</option>
+                </select>
+              </label>
+              <label class="rating-unrated"><input id="include-unrated-tv" type="checkbox" checked> Display unrated / NR TV shows</label>
+            </div>
+          </div>
+        </section>
+      </details>
+      <details class="source-card" open>
+        <summary><span class="source-title">Step 3: Critic Scores via OMDb (Optional)</span><span id="omdb-source-status" class="source-pill">Optional - Not Configured</span></summary>
+        <p class="source-description">Adds Metacritic, IMDb, and Rotten Tomatoes scores to the voting cards.</p>
+        <ol class="setup-steps">
+          <li>Request a free key (1,000 requests/day) at <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener noreferrer">omdbapi.com/apikey.aspx</a> (select the <strong>FREE</strong> tier).</li>
+          <li>Click the activation link in your email and paste the key below.</li>
+        </ol>
+        <label class="field">OMDb API Key<input id="omdb-key" type="password" autocomplete="off"></label>
+      </details>
       <p id="settings-status" class="status" aria-live="polite"></p>
       <button class="button" type="submit">Save settings</button>
     </form>
@@ -83,8 +105,65 @@
       <button id="toggle-voting" class="button secondary" type="button"></button>
       <a class="button secondary" href="/results" style="margin-left:7px">View results</a>
     </section>
-    <section class="panel">
-      <div class="section-head"><h2>Active shortlist</h2><span id="shortlist-count" class="muted"></span></div>
+    <section class="panel shortlist-manager">
+      <div class="section-head"><h2>Shortlist Manager</h2><span id="shortlist-count" class="muted"></span></div>
+      <div class="capacity-setting">
+        <label class="field">Max Shortlist Size
+          <input id="shortlist-max-size" form="settings-form" type="number" min="3" max="100" step="1" value="20" required>
+        </label>
+        <small>Default: 20</small>
+        <button class="button secondary" type="submit" form="settings-form">Save size</button>
+      </div>
+      <section class="fill-generator">
+        <div class="section-head"><h3>Fill Shortlist</h3></div>
+        <div class="fill-duration-filters">
+          <label class="field">Min Duration
+            <select id="fill-min-duration">
+              <option value="0" selected>Any</option>
+              <option value="30">30 min</option>
+              <option value="45">45 min</option>
+              <option value="60">60 min (1 hr)</option>
+              <option value="75">75 min</option>
+              <option value="90">90 min (1.5 hrs)</option>
+              <option value="105">105 min</option>
+              <option value="120">120 min (2 hrs)</option>
+            </select>
+          </label>
+          <label class="field">Max Duration
+            <select id="fill-max-duration">
+              <option value="9999" selected>Any</option>
+              <option value="45">45 min</option>
+              <option value="60">60 min (1 hr)</option>
+              <option value="90">90 min (1.5 hrs)</option>
+              <option value="105">105 min</option>
+              <option value="120">120 min (2 hrs)</option>
+              <option value="135">135 min</option>
+              <option value="150">150 min (2.5 hrs)</option>
+              <option value="180">180 min (3 hrs)</option>
+            </select>
+          </label>
+        </div>
+        <div class="fill-grid">
+          <section>
+            <div class="filter-head">
+              <strong>Genres</strong>
+              <span><button id="genres-select-all" class="text-button" type="button">Select All</button><button id="genres-clear" class="text-button" type="button">Clear</button></span>
+            </div>
+            <div id="fill-genres" class="fill-options"></div>
+          </section>
+          <section>
+            <div class="filter-head">
+              <strong>Eras</strong>
+              <span><button id="eras-select-all" class="text-button" type="button">Select All</button><button id="eras-clear" class="text-button" type="button">Clear</button></span>
+            </div>
+            <div id="fill-eras" class="fill-options"></div>
+          </section>
+        </div>
+        <div class="toolbar fill-actions">
+          <button id="fill-shortlist" class="button" type="button">Fill Shortlist Now</button>
+          <span id="fill-status" class="status" aria-live="polite"></span>
+        </div>
+      </section>
       <div id="admin-shortlist"></div>
       <button id="clear-shortlist" class="button danger" type="button">Clear shortlist and ballots</button>
     </section>

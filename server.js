@@ -8,6 +8,9 @@ const { createPin, getLabels, getLibraries, getSyncStats, plexServers, pollPin, 
 const { enrichShortlist } = require('./metadata');
 const { isAllowedByRating, needsCertification } = require('./ratings');
 const tmdb = require('./tmdb');
+const {
+  fillGenres, fillEras, mapLimit, plexFillCandidates, sameTitle, shuffle, tmdbFillCandidates
+} = require('./shortlist-fill');
 
 if (!process.env.ADMIN_PIN || !process.env.SESSION_SECRET) {
   throw new Error('Set ADMIN_PIN and SESSION_SECRET in your .env file.');
@@ -39,12 +42,18 @@ function setSetting(key, value) {
 }
 
 for (const [key, value] of Object.entries({
+  shortlist_max_size: '20',
   max_movie_rating: 'ALL',
   include_unrated_movies: 'true',
   max_tv_rating: 'ALL',
   include_unrated_tv: 'true'
 })) {
   db.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)').run(key, value);
+}
+
+function shortlistMaxSize() {
+  const size = Number(getSetting('shortlist_max_size', '20'));
+  return Number.isInteger(size) && size >= 3 && size <= 100 ? size : 20;
 }
 
 function getPlexClientId() {
@@ -70,6 +79,7 @@ function config() {
     include_unrated_movies: getSetting('include_unrated_movies', 'true') === 'true',
     max_tv_rating: getSetting('max_tv_rating', 'ALL'),
     include_unrated_tv: getSetting('include_unrated_tv', 'true') === 'true',
+    shortlistMaxSize: shortlistMaxSize(),
     providers: activeProviders
   };
 }
@@ -81,6 +91,20 @@ function adminOnly(req, res, next) {
 
 function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+}
+
+const insertShortlistRow = db.prepare(`INSERT INTO shortlist
+  (id,source,source_id,title,type,year,poster,summary,content_rating,genres,cast_top2,director,metacritic_score,
+    imdb_rating,rt_score,imdb_id,imdb_top250_rank,providers)
+  VALUES (@id,@source,@sourceId,@title,@type,@year,@poster,@summary,@content_rating,@genres,@cast_top2,@director,
+    @metacritic_score,@imdb_rating,@rt_score,@imdb_id,@imdb_top250_rank,@providers)`);
+
+function saveShortlistItem(item, details) {
+  const id = `${item.source}:${item.sourceId}`;
+  insertShortlistRow.run({
+    id, source: item.source, sourceId: String(item.sourceId), title: item.title, type: item.type, year: item.year,
+    ...details, poster: details.poster || item.poster || ''
+  });
 }
 
 app.post('/api/admin/login', (req, res) => {
@@ -114,6 +138,7 @@ app.get('/api/admin/settings', adminOnly, (req, res) => {
     labels: getSetting('plex_labels'), tmdbKey: c.tmdbKey, omdbKey: c.omdbKey,
     maxMovieRating: c.max_movie_rating, includeUnratedMovies: c.include_unrated_movies,
     maxTvRating: c.max_tv_rating, includeUnratedTv: c.include_unrated_tv,
+    shortlistMaxSize: c.shortlistMaxSize,
     providers: c.providers, providerOptions: providers,
     votingClosed: getSetting('voting_closed', 'false') === 'true'
   });
@@ -174,6 +199,12 @@ app.post('/api/admin/settings', adminOnly, (req, res) => {
   const tvRatings = ['TV-Y', 'TV-Y7', 'TV-G', 'TV-PG', 'TV-14', 'ALL'];
   const maxMovieRating = String(body.maxMovieRating ?? getSetting('max_movie_rating', 'ALL'));
   const maxTvRating = String(body.maxTvRating ?? getSetting('max_tv_rating', 'ALL'));
+  const maxShortlistSize = body.shortlistMaxSize == null
+    ? shortlistMaxSize()
+    : Number(body.shortlistMaxSize);
+  if (!Number.isInteger(maxShortlistSize) || maxShortlistSize < 3 || maxShortlistSize > 100) {
+    return res.status(400).json({ error: 'Max shortlist size must be an integer from 3 to 100.' });
+  }
   if (!movieRatings.includes(maxMovieRating) || !tvRatings.includes(maxTvRating)) {
     return res.status(400).json({ error: 'Invalid content rating selection.' });
   }
@@ -199,6 +230,7 @@ app.post('/api/admin/settings', adminOnly, (req, res) => {
     include_unrated_movies: includeUnratedMovies,
     max_tv_rating: maxTvRating,
     include_unrated_tv: includeUnratedTv,
+    shortlist_max_size: maxShortlistSize,
     providers: JSON.stringify([...new Set(chosen)])
   })) setSetting(key, value);
   res.json({ ok: true });
@@ -231,8 +263,18 @@ app.delete('/api/admin/shortlist', adminOnly, (req, res) => {
 
 app.get('/api/status', (req, res) => res.json({
   votingClosed: getSetting('voting_closed', 'false') === 'true',
-  shortlistCount: db.prepare('SELECT count(*) AS count FROM shortlist').get().count
+  shortlistCount: db.prepare('SELECT count(*) AS count FROM shortlist').get().count,
+  shortlistMaxSize: shortlistMaxSize()
 }));
+
+app.get('/api/config/status', (req, res) => {
+  const c = config();
+  res.json({
+    plexConfigured: Boolean(c.serverUrl && c.plexToken),
+    tmdbConfigured: Boolean(c.tmdbKey),
+    omdbConfigured: Boolean(c.omdbKey)
+  });
+});
 
 app.get('/api/search', asyncRoute(async (req, res) => {
   const query = String(req.query.q || '').trim();
@@ -300,8 +342,79 @@ app.get('/api/plex-image', asyncRoute(async (req, res) => {
   res.send(Buffer.from(await response.arrayBuffer()));
 }));
 
+app.post('/api/shortlist/fill', adminOnly, asyncRoute(async (req, res) => {
+  if (getSetting('voting_closed', 'false') === 'true') {
+    return res.status(403).json({ error: 'Shortlist editing is closed.' });
+  }
+  const settings = config();
+  const currentCount = db.prepare('SELECT count(*) AS count FROM shortlist').get().count;
+  const needed = settings.shortlistMaxSize - currentCount;
+  if (needed <= 0) {
+    return res.json({ addedCount: 0, newTotal: currentCount, message: 'Shortlist is already full' });
+  }
+
+  const requestedGenres = req.body?.genres ?? [];
+  const requestedEraIds = req.body?.eras ?? [];
+  if (!Array.isArray(requestedGenres) || requestedGenres.some(name => !Object.hasOwn(fillGenres, name)) ||
+      !Array.isArray(requestedEraIds)) {
+    return res.status(400).json({ error: 'Invalid genre or era selection.' });
+  }
+  const availableEras = new Map(fillEras().map(era => [era.id, era]));
+  const eraIds = [...new Set(requestedEraIds.map(String))];
+  if (eraIds.some(id => !availableEras.has(id))) {
+    return res.status(400).json({ error: 'Invalid era selection.' });
+  }
+  const genreNames = [...new Set(requestedGenres)];
+  const eras = eraIds.map(id => availableEras.get(id));
+  const minDuration = Number(req.body?.minDuration ?? 0);
+  const maxDuration = Number(req.body?.maxDuration ?? 9999);
+  if (![0, 30, 45, 60, 75, 90, 105, 120].includes(minDuration) ||
+      ![9999, 45, 60, 90, 105, 120, 135, 150, 180].includes(maxDuration)) {
+    return res.status(400).json({ error: 'Invalid runtime duration selection.' });
+  }
+  const plex = plexFillCandidates(settings, genreNames, eras, minDuration, maxDuration);
+  const streaming = await tmdbFillCandidates(settings, genreNames, eras, needed, minDuration, maxDuration);
+  const shortlist = db.prepare('SELECT source,source_id AS sourceId,title,type,year FROM shortlist').all();
+  const known = [...shortlist];
+  const candidates = [];
+  for (const item of [...plex, ...streaming]) {
+    if (known.some(existing =>
+      (existing.source === item.source && existing.sourceId === item.sourceId) || sameTitle(existing, item)
+    )) continue;
+    known.push(item);
+    candidates.push(item);
+  }
+  const selected = shuffle(candidates).slice(0, needed);
+  const enriched = await mapLimit(selected, 4, async item => ({
+    item, details: await enrichShortlist(item, settings)
+  }));
+  const addItems = db.transaction(items => {
+    let total = db.prepare('SELECT count(*) AS count FROM shortlist').get().count;
+    const maxSize = shortlistMaxSize();
+    const existing = db.prepare('SELECT source,source_id AS sourceId,title,type,year FROM shortlist').all();
+    let addedCount = 0;
+    for (const { item, details } of items) {
+      if (total >= maxSize) break;
+      if (existing.some(row =>
+        (row.source === item.source && row.sourceId === item.sourceId) || sameTitle(row, item)
+      )) continue;
+      saveShortlistItem(item, details);
+      existing.push(item);
+      total++;
+      addedCount++;
+    }
+    return { addedCount, newTotal: total };
+  });
+  const result = addItems(enriched);
+  res.json({
+    ...result,
+    ...(result.addedCount ? {} : { message: 'No matching titles found.' })
+  });
+}));
+
 app.get('/api/shortlist', (req, res) => {
-  const titles = db.prepare(`SELECT id,source,source_id AS sourceId,title,type,year,poster,genres,
+  const titles = db.prepare(`SELECT id,source,source_id AS sourceId,title,type,year,poster,summary,
+    content_rating AS contentRating,genres,
     cast_top2 AS castTop2,director,metacritic_score AS metacriticScore,imdb_rating AS imdbRating,
     rt_score AS rtScore,imdb_id AS imdbId,imdb_top250_rank AS imdbTop250Rank,providers
     FROM shortlist ORDER BY title COLLATE NOCASE`).all();
@@ -323,24 +436,24 @@ app.post('/api/shortlist', asyncRoute(async (req, res) => {
   if (db.prepare('SELECT 1 FROM shortlist WHERE source=? AND source_id=?').get(source, String(sourceId))) {
     return res.status(409).json({ error: 'That title is already shortlisted.' });
   }
-  if (db.prepare('SELECT count(*) AS count FROM shortlist').get().count >= 20) {
-    return res.status(409).json({ error: 'The shortlist is full (20 titles maximum).' });
+  if (db.prepare('SELECT count(*) AS count FROM shortlist').get().count >= shortlistMaxSize()) {
+    return res.status(409).json({ error: `The shortlist is full (${shortlistMaxSize()} titles maximum).` });
   }
-  const details = await enrichShortlist({
+  const item = {
     source, sourceId: String(sourceId), title: String(title), type,
-    year: Number(year) || null
-  }, config());
-  const id = `${source}:${sourceId}`;
-  db.prepare(`INSERT INTO shortlist
-    (id,source,source_id,title,type,year,poster,genres,cast_top2,director,metacritic_score,
-      imdb_rating,rt_score,imdb_id,imdb_top250_rank,providers)
-    VALUES (@id,@source,@sourceId,@title,@type,@year,@poster,@genres,@cast_top2,@director,
-      @metacritic_score,@imdb_rating,@rt_score,@imdb_id,@imdb_top250_rank,@providers)`)
-    .run({
-      id, source, sourceId: String(sourceId), title: String(title), type, year: Number(year) || null,
-      poster: String(poster || ''), ...details
-    });
-  res.status(201).json({ id });
+    year: Number(year) || null, poster: String(poster || '')
+  };
+  const settings = config();
+  const details = await enrichShortlist(item, settings);
+  const count = db.prepare('SELECT count(*) AS count FROM shortlist').get().count;
+  if (count >= settings.shortlistMaxSize) {
+    return res.status(409).json({ error: `The shortlist is full (${settings.shortlistMaxSize} titles maximum).` });
+  }
+  if (db.prepare('SELECT 1 FROM shortlist WHERE source=? AND source_id=?').get(source, item.sourceId)) {
+    return res.status(409).json({ error: 'That title is already shortlisted.' });
+  }
+  saveShortlistItem(item, details);
+  res.status(201).json({ id: `${source}:${sourceId}` });
 }));
 
 app.get('/api/ballot', (req, res) => {

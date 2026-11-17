@@ -7,6 +7,28 @@ const plexToken = document.getElementById('plex-token');
 const sectionIds = document.getElementById('plex-sections');
 const labelsInput = document.getElementById('plex-labels');
 let votingClosed = false;
+let shortlistMaxSize = 20;
+let shortlistCount = 0;
+const fillGenreNames = [
+  'Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary',
+  'Drama', 'Family', 'Horror', 'Mystery', 'Romance', 'Sci-Fi / Fantasy'
+];
+
+function fillEras() {
+  const year = new Date().getFullYear();
+  const eras = [
+    [1910, 1928, '1910–1928'], [1929, 1949, '1929–1949'],
+    [1950, 1965, '1950–1965'], [1966, 1979, '1966–1979'],
+    [1980, 1989, '1980–1989'], [1990, 1999, '1990–1999'],
+    [2000, 2009, '2000–2009'], [2010, 2019, '2010–2019']
+  ];
+  const currentDecade = Math.floor(year / 10) * 10;
+  for (let start = 2020; start <= currentDecade; start += 10) {
+    const active = start === currentDecade;
+    eras.push([start, active ? year : start + 9, active ? `${start}–Present` : `${start}–${start + 9}`]);
+  }
+  return eras.map(([start, end, label]) => ({ id: `${start}:${end}`, label }));
+}
 
 function showStatus(message, success = false) {
   settingsStatus.textContent = message;
@@ -14,6 +36,10 @@ function showStatus(message, success = false) {
 }
 
 function collectSettings() {
+  const maxSize = Number(document.getElementById('shortlist-max-size').value);
+  if (!Number.isInteger(maxSize) || maxSize < 3 || maxSize > 100) {
+    throw new Error('Max shortlist size must be an integer from 3 to 100.');
+  }
   return {
     plexUrl: plexUrl.value,
     plexToken: plexToken.value,
@@ -25,13 +51,30 @@ function collectSettings() {
     includeUnratedMovies: document.getElementById('include-unrated-movies').checked,
     maxTvRating: document.getElementById('max-tv-rating').value,
     includeUnratedTv: document.getElementById('include-unrated-tv').checked,
+    shortlistMaxSize: maxSize,
     providers: [...document.querySelectorAll('#provider-checks input:checked')].map(input => Number(input.value))
   };
 }
 
+function renderSourceStatus(elementId, configured) {
+  const status = document.getElementById(elementId);
+  status.textContent = configured ? 'Connected' : 'Optional - Not Configured';
+  status.className = `source-pill ${configured ? 'connected' : ''}`;
+}
+
+function renderSourceStatuses(status) {
+  renderSourceStatus('plex-source-status', status.plexConfigured);
+  renderSourceStatus('tmdb-source-status', status.tmdbConfigured);
+  renderSourceStatus('omdb-source-status', status.omdbConfigured);
+}
+
 async function saveSettings(showMessage = true) {
-  await API.request('/api/admin/settings', { method: 'POST', body: JSON.stringify(collectSettings()) });
+  const settings = collectSettings();
+  await API.request('/api/admin/settings', { method: 'POST', body: JSON.stringify(settings) });
+  shortlistMaxSize = settings.shortlistMaxSize;
+  renderShortlistCount();
   await refreshPlexStats();
+  renderSourceStatuses(await API.request('/api/config/status'));
   if (showMessage) showStatus('Settings saved.', true);
 }
 
@@ -139,7 +182,10 @@ async function initializePlex(plexSettings) {
 
 async function loadAdmin() {
   try {
-    const [settings, titles] = await Promise.all([API.request('/api/admin/settings'), API.request('/api/shortlist')]);
+    const [settings, titles, sourceStatus] = await Promise.all([
+      API.request('/api/admin/settings'), API.request('/api/shortlist'), API.request('/api/config/status')
+    ]);
+    renderSourceStatuses(sourceStatus);
     plexUrl.value = settings.plexUrl;
     plexToken.value = settings.plexToken;
     sectionIds.value = settings.sectionIds;
@@ -151,6 +197,9 @@ async function loadAdmin() {
     document.getElementById('include-unrated-movies').checked = settings.includeUnratedMovies;
     document.getElementById('max-tv-rating').value = settings.maxTvRating;
     document.getElementById('include-unrated-tv').checked = settings.includeUnratedTv;
+    document.getElementById('shortlist-max-size').value = settings.shortlistMaxSize;
+    shortlistMaxSize = settings.shortlistMaxSize;
+    renderFillFilters();
     const checks = document.getElementById('provider-checks');
     checks.replaceChildren(...settings.providerOptions.map(([name, id]) => {
       const label = document.createElement('label');
@@ -180,7 +229,8 @@ function renderVoting() {
 function renderShortlist(items) {
   const list = document.getElementById('admin-shortlist');
   list.replaceChildren();
-  document.getElementById('shortlist-count').textContent = `${items.length}/20 titles`;
+  shortlistCount = items.length;
+  renderShortlistCount();
   for (const item of items) {
     const row = document.createElement('div');
     row.className = 'admin-item';
@@ -202,6 +252,71 @@ function renderShortlist(items) {
   }
   document.getElementById('clear-shortlist').disabled = !items.length;
 }
+
+function renderShortlistCount() {
+  document.getElementById('shortlist-count').textContent = `${shortlistCount} / ${shortlistMaxSize} titles`;
+  document.getElementById('fill-shortlist').disabled = shortlistCount >= shortlistMaxSize;
+}
+
+function renderFillFilters() {
+  const genres = document.getElementById('fill-genres');
+  genres.replaceChildren(...fillGenreNames.map(name => {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.value = name;
+    label.append(input, document.createTextNode(name));
+    return label;
+  }));
+  const eras = document.getElementById('fill-eras');
+  eras.replaceChildren(...fillEras().map(era => {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.value = era.id;
+    label.append(input, document.createTextNode(era.label));
+    return label;
+  }));
+}
+
+function setAllChecked(containerId, checked) {
+  document.querySelectorAll(`#${containerId} input`).forEach(input => { input.checked = checked; });
+}
+
+for (const [buttonId, containerId, checked] of [
+  ['genres-select-all', 'fill-genres', true], ['genres-clear', 'fill-genres', false],
+  ['eras-select-all', 'fill-eras', true], ['eras-clear', 'fill-eras', false]
+]) {
+  document.getElementById(buttonId).addEventListener('click', () => setAllChecked(containerId, checked));
+}
+
+document.getElementById('fill-shortlist').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  const status = document.getElementById('fill-status');
+  button.disabled = true;
+  status.textContent = 'Finding highly rated titles…';
+  status.className = 'status';
+  try {
+    await saveSettings(false);
+    const result = await API.request('/api/shortlist/fill', {
+      method: 'POST',
+      body: JSON.stringify({
+        genres: [...document.querySelectorAll('#fill-genres input:checked')].map(input => input.value),
+        eras: [...document.querySelectorAll('#fill-eras input:checked')].map(input => input.value),
+        minDuration: Number(document.getElementById('fill-min-duration').value),
+        maxDuration: Number(document.getElementById('fill-max-duration').value)
+      })
+    });
+    renderShortlist(await API.request('/api/shortlist'));
+    status.textContent = result.message || `Added ${result.addedCount} ${result.addedCount === 1 ? 'title' : 'titles'}.`;
+    status.className = `status ${result.addedCount ? 'success' : ''}`;
+  } catch (error) {
+    status.textContent = error.message;
+    status.className = 'status error';
+  } finally {
+    button.disabled = shortlistCount >= shortlistMaxSize;
+  }
+});
 
 settingsForm.addEventListener('submit', async event => {
   event.preventDefault();

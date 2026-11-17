@@ -162,6 +162,7 @@ document.getElementById('submit-vote').addEventListener('click', async () => {
     await API.request('/api/ballot', { method: 'POST', body: JSON.stringify({ voter, ranks, approvals, vetoes }) });
     voteStatus.textContent = 'Your ballot is saved. You can update it any time before voting closes.';
     voteStatus.className = 'status success';
+    document.getElementById('view-results').hidden = false;
   } catch (error) {
     voteStatus.textContent = error.message;
     voteStatus.className = 'status error';

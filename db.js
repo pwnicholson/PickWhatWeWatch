@@ -46,14 +46,16 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS plex_titles (
     id TEXT PRIMARY KEY, title TEXT NOT NULL, type TEXT NOT NULL, year INTEGER,
-    summary TEXT, poster TEXT, rating TEXT, genres TEXT NOT NULL DEFAULT '[]',
+    summary TEXT, poster TEXT, rating TEXT, audience_rating REAL, duration_mins INTEGER,
+    genres TEXT NOT NULL DEFAULT '[]',
     section_id TEXT, cast_top2 TEXT NOT NULL DEFAULT '[]', director TEXT
   );
   CREATE TABLE IF NOT EXISTS shortlist (
     id TEXT PRIMARY KEY, source TEXT NOT NULL, source_id TEXT NOT NULL,
     title TEXT NOT NULL, type TEXT NOT NULL, year INTEGER, poster TEXT,
     genres TEXT NOT NULL DEFAULT '[]', cast_top2 TEXT NOT NULL DEFAULT '[]',
-    director TEXT, metacritic_score TEXT, imdb_rating TEXT, rt_score TEXT,
+    director TEXT, summary TEXT, content_rating TEXT,
+    metacritic_score TEXT, imdb_rating TEXT, rt_score TEXT,
     imdb_id TEXT, imdb_top250_rank INTEGER, providers TEXT NOT NULL DEFAULT '[]',
     UNIQUE(source, source_id)
   );
@@ -73,12 +75,16 @@ function addMissingColumns(table, columns) {
 addMissingColumns('plex_titles', {
   labels: "TEXT NOT NULL DEFAULT '[]'",
   cast_top2: "TEXT NOT NULL DEFAULT '[]'",
-  director: 'TEXT'
+  director: 'TEXT',
+  audience_rating: 'REAL',
+  duration_mins: 'INTEGER'
 });
 addMissingColumns('shortlist', {
   genres: "TEXT NOT NULL DEFAULT '[]'",
   cast_top2: "TEXT NOT NULL DEFAULT '[]'",
   director: 'TEXT',
+  summary: 'TEXT',
+  content_rating: 'TEXT',
   metacritic_score: 'TEXT',
   imdb_rating: 'TEXT',
   rt_score: 'TEXT',

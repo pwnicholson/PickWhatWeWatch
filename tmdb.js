@@ -34,6 +34,19 @@ async function certification(type, id, key) {
   return value;
 }
 
+async function discover(type, params, key) {
+  const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value != null && value !== ''));
+  return tmdb(`/discover/${type}?${query}`, key);
+}
+
+async function tvRuntime(id, key) {
+  const result = await tmdb(`/tv/${encodeURIComponent(id)}`, key);
+  const episodeRuntime = Number(result.episode_run_time?.[0]);
+  const lastEpisodeRuntime = Number(result.last_episode_to_air?.runtime);
+  if (Number.isFinite(episodeRuntime) && episodeRuntime > 0) return episodeRuntime;
+  return Number.isFinite(lastEpisodeRuntime) && lastEpisodeRuntime > 0 ? lastEpisodeRuntime : null;
+}
+
 function compact(item, source) {
   const isTv = item.media_type === 'tv' || source === 'tv';
   return {
@@ -130,4 +143,4 @@ async function findDetails(title, type, year, config) {
   return match ? details(mediaType, match.item.id, config) : null;
 }
 
-module.exports = { search, details, findDetails, certification, tmdb };
+module.exports = { search, details, findDetails, certification, discover, tvRuntime, tmdb };

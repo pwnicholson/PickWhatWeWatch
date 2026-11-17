@@ -131,13 +131,19 @@ async function syncLibraries(config) {
       const genres = array(item.Genre).map(genre => genre.tag).filter(Boolean);
       const castTop2 = array(item.Role).map(role => role.tag).filter(Boolean).slice(0, 2);
       const director = array(item.Director).map(person => person.tag).find(Boolean) || '';
+      const rawAudienceRating = item.audienceRating ?? item.rating;
+      const audienceRating = rawAudienceRating == null || rawAudienceRating === '' ? null : Number(rawAudienceRating);
+      const duration = item.duration == null || item.duration === '' ? null : Number(item.duration);
+      const durationMins = Number.isFinite(duration) && duration > 0 ? Math.round(duration / 60000) : null;
       const id = String(item.ratingKey ?? item.key);
       if (!id) continue;
       itemsById.set(id, {
         id, title: item.title || 'Untitled', type: item.type === 'show' ? 'tv' : 'movie',
         year: Number(item.year) || null, summary: item.summary || '',
         poster: item.thumb ? `/api/plex-image?path=${encodeURIComponent(item.thumb)}` : '',
-        rating: item.contentRating || '', genres: JSON.stringify(genres),
+        rating: item.contentRating || '', audience_rating: Number.isFinite(audienceRating) ? audienceRating : null,
+        duration_mins: durationMins,
+        genres: JSON.stringify(genres),
         cast_top2: JSON.stringify(castTop2), director,
         labels: JSON.stringify(labels), section_id: sectionId
       });
@@ -148,8 +154,8 @@ async function syncLibraries(config) {
   const replace = db.transaction(items => {
     db.prepare('DELETE FROM plex_titles').run();
     const insert = db.prepare(`INSERT OR REPLACE INTO plex_titles
-      (id,title,type,year,summary,poster,rating,genres,section_id,labels,cast_top2,director)
-      VALUES (@id,@title,@type,@year,@summary,@poster,@rating,@genres,@section_id,@labels,@cast_top2,@director)`);
+      (id,title,type,year,summary,poster,rating,audience_rating,duration_mins,genres,section_id,labels,cast_top2,director)
+      VALUES (@id,@title,@type,@year,@summary,@poster,@rating,@audience_rating,@duration_mins,@genres,@section_id,@labels,@cast_top2,@director)`);
     for (const item of items) insert.run(item);
   });
   try {
