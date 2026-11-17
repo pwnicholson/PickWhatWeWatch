@@ -1,10 +1,12 @@
-require('dotenv').config();
+require('dotenv').config(process.env.PWW_ENV_PATH ? { path: process.env.PWW_ENV_PATH } : {});
 const { randomUUID } = require('node:crypto');
 const path = require('node:path');
 const express = require('express');
 const session = require('express-session');
 const db = require('./db');
-const { createPin, getLabels, getLibraries, plexServers, pollPin, syncLibraries } = require('./plex');
+const { createPin, getLabels, getLibraries, getSyncStats, plexServers, pollPin, syncLibraries } = require('./plex');
+const { enrichShortlist } = require('./metadata');
+const { isAllowedByRating, needsCertification } = require('./ratings');
 const tmdb = require('./tmdb');
 
 if (!process.env.ADMIN_PIN || !process.env.SESSION_SECRET) {
@@ -36,6 +38,15 @@ function setSetting(key, value) {
     .run(key, String(value));
 }
 
+for (const [key, value] of Object.entries({
+  max_movie_rating: 'ALL',
+  include_unrated_movies: 'true',
+  max_tv_rating: 'ALL',
+  include_unrated_tv: 'true'
+})) {
+  db.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)').run(key, value);
+}
+
 function getPlexClientId() {
   let clientId = getSetting('plex_client_id');
   if (!clientId) {
@@ -54,6 +65,11 @@ function config() {
     sectionIds: getSetting('plex_sections'),
     labels: getSetting('plex_labels').split(',').map(value => value.trim().toLowerCase()).filter(Boolean),
     tmdbKey: getSetting('tmdb_key'),
+    omdbKey: getSetting('omdb_api_key') || process.env.OMDB_API_KEY || '',
+    max_movie_rating: getSetting('max_movie_rating', 'ALL'),
+    include_unrated_movies: getSetting('include_unrated_movies', 'true') === 'true',
+    max_tv_rating: getSetting('max_tv_rating', 'ALL'),
+    include_unrated_tv: getSetting('include_unrated_tv', 'true') === 'true',
     providers: activeProviders
   };
 }
@@ -94,8 +110,10 @@ app.get('/api/admin/settings', adminOnly, (req, res) => {
   const c = config();
   res.json({
     plexUrl: c.serverUrl, plexToken: c.plexToken, sectionIds: c.sectionIds,
-    plexOAuth: Boolean(getSetting('plex_client_id')),
-    labels: getSetting('plex_labels'), tmdbKey: c.tmdbKey,
+    plexOAuth: getSetting('plex_oauth_connected') === 'true',
+    labels: getSetting('plex_labels'), tmdbKey: c.tmdbKey, omdbKey: c.omdbKey,
+    maxMovieRating: c.max_movie_rating, includeUnratedMovies: c.include_unrated_movies,
+    maxTvRating: c.max_tv_rating, includeUnratedTv: c.include_unrated_tv,
     providers: c.providers, providerOptions: providers,
     votingClosed: getSetting('voting_closed', 'false') === 'true'
   });
@@ -122,6 +140,7 @@ app.get('/api/plex/auth/poll/:pinId', adminOnly, asyncRoute(async (req, res) => 
   const result = await pollPin(pinId, getPlexClientId());
   if (!result.authToken) return res.json({ authorized: false });
   setSetting('plex_token', result.authToken);
+  setSetting('plex_oauth_connected', 'true');
   delete req.session.plexPinId;
   res.json({ authorized: true });
 }));
@@ -134,6 +153,10 @@ app.get('/api/plex/libraries', adminOnly, asyncRoute(async (req, res) => {
   res.json({ libraries: await getLibraries(config()) });
 }));
 
+app.get('/api/plex/stats', adminOnly, (req, res) => {
+  res.json(getSyncStats(config()));
+});
+
 app.get('/api/plex/labels', adminOnly, asyncRoute(async (req, res) => {
   const sectionIds = String(req.query.sectionIds || config().sectionIds)
     .split(',').map(value => value.trim()).filter(Boolean);
@@ -143,24 +166,52 @@ app.get('/api/plex/labels', adminOnly, asyncRoute(async (req, res) => {
 
 app.post('/api/admin/settings', adminOnly, (req, res) => {
   const body = req.body || {};
+  const plexToken = String(body.plexToken || '').trim();
   const chosen = Array.isArray(body.providers) ? body.providers.map(Number) : [];
   const allowed = new Set(providers.map(([, id]) => id));
   if (chosen.some(id => !allowed.has(id))) return res.status(400).json({ error: 'Invalid streaming provider selection.' });
+  const movieRatings = ['G', 'PG', 'PG-13', 'R', 'ALL'];
+  const tvRatings = ['TV-Y', 'TV-Y7', 'TV-G', 'TV-PG', 'TV-14', 'ALL'];
+  const maxMovieRating = String(body.maxMovieRating ?? getSetting('max_movie_rating', 'ALL'));
+  const maxTvRating = String(body.maxTvRating ?? getSetting('max_tv_rating', 'ALL'));
+  if (!movieRatings.includes(maxMovieRating) || !tvRatings.includes(maxTvRating)) {
+    return res.status(400).json({ error: 'Invalid content rating selection.' });
+  }
+  if ((body.includeUnratedMovies != null && typeof body.includeUnratedMovies !== 'boolean') ||
+      (body.includeUnratedTv != null && typeof body.includeUnratedTv !== 'boolean')) {
+    return res.status(400).json({ error: 'Unrated content settings must be boolean.' });
+  }
+  const includeUnratedMovies = body.includeUnratedMovies == null
+    ? getSetting('include_unrated_movies', 'true') === 'true'
+    : body.includeUnratedMovies === true;
+  const includeUnratedTv = body.includeUnratedTv == null
+    ? getSetting('include_unrated_tv', 'true') === 'true'
+    : body.includeUnratedTv === true;
+  if (plexToken !== getSetting('plex_token')) setSetting('plex_oauth_connected', 'false');
   for (const [key, value] of Object.entries({
     plex_url: String(body.plexUrl || '').trim(),
-    plex_token: String(body.plexToken || '').trim(),
+    plex_token: plexToken,
     plex_sections: String(body.sectionIds || '').trim(),
     plex_labels: String(body.labels || '').trim(),
     tmdb_key: String(body.tmdbKey || '').trim(),
+    omdb_api_key: String(body.omdbKey || '').trim(),
+    max_movie_rating: maxMovieRating,
+    include_unrated_movies: includeUnratedMovies,
+    max_tv_rating: maxTvRating,
+    include_unrated_tv: includeUnratedTv,
     providers: JSON.stringify([...new Set(chosen)])
   })) setSetting(key, value);
   res.json({ ok: true });
 });
 
-app.post('/api/admin/sync', adminOnly, asyncRoute(async (req, res) => {
-  const count = await syncLibraries(config());
-  res.json({ count });
-}));
+app.post('/api/admin/sync', adminOnly, async (req, res) => {
+  try {
+    res.json({ ok: true, ...await syncLibraries(config()) });
+  } catch (error) {
+    console.error(`Plex sync failed: ${error.stack || error.message}`);
+    res.status(500).json({ ok: false, error: error.message || 'Plex sync failed.' });
+  }
+});
 
 app.post('/api/admin/voting', adminOnly, (req, res) => {
   setSetting('voting_closed', req.body?.closed ? 'true' : 'false');
@@ -187,12 +238,33 @@ app.get('/api/search', asyncRoute(async (req, res) => {
   const query = String(req.query.q || '').trim();
   if (query.length < 2) return res.json([]);
   const needle = `%${query.replace(/[\\%_]/g, '\\$&')}%`;
-  const plex = db.prepare(`SELECT id, title, type, year, poster, summary
-    FROM plex_titles WHERE title LIKE ? ESCAPE '\\' ORDER BY title LIMIT 30`).all(needle)
-    .map(item => ({ ...item, source: 'plex', sourceId: item.id }));
-  const remote = await tmdb.search(query, config());
-  const present = new Set(plex.map(item => item.title.toLowerCase()));
-  res.json([...plex, ...remote.filter(item => !present.has(item.title.toLowerCase()))]);
+  const settings = config();
+  const plex = db.prepare(`SELECT id, title, type, year, poster, summary, rating
+    FROM plex_titles WHERE title LIKE ? ESCAPE '\\' ORDER BY title`).all(needle)
+    .filter(item => isAllowedByRating(item.type, item.rating, settings))
+    .slice(0, 30)
+    .map(({ rating, ...item }) => ({ ...item, source: 'plex', sourceId: item.id }));
+  const remote = await tmdb.search(query, settings);
+  const ratedRemote = await Promise.all(remote.map(async item => {
+    if (!needsCertification(item.type, settings)) return item;
+    const match = String(item.sourceId).match(/^(movie|tv):(\d+)$/);
+    if (!match) throw new Error('TMDB returned an invalid title ID.');
+    const rating = await tmdb.certification(match[1], match[2], settings.tmdbKey);
+    return isAllowedByRating(item.type, rating, settings) ? item : null;
+  }));
+  const normalizeTitle = title => String(title || '').normalize('NFKD')
+    .replace(/\p{M}/gu, '').toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  const duplicatesPlex = item => {
+    const title = normalizeTitle(item.title);
+    const year = item.year == null ? null : Number(item.year);
+    if (!title || year == null || !Number.isFinite(year)) return false;
+    return plex.some(match => {
+      const plexYear = match.year == null ? null : Number(match.year);
+      return match.type === item.type && normalizeTitle(match.title) === title &&
+        plexYear != null && Number.isFinite(plexYear) && Math.abs(plexYear - year) <= 1;
+    });
+  };
+  res.json([...plex, ...ratedRemote.filter(item => item && !duplicatesPlex(item))]);
 }));
 
 app.get('/api/title', asyncRoute(async (req, res) => {
@@ -229,14 +301,24 @@ app.get('/api/plex-image', asyncRoute(async (req, res) => {
 }));
 
 app.get('/api/shortlist', (req, res) => {
-  res.json(db.prepare('SELECT id,source,source_id AS sourceId,title,type,year,poster FROM shortlist ORDER BY title COLLATE NOCASE').all());
+  const titles = db.prepare(`SELECT id,source,source_id AS sourceId,title,type,year,poster,genres,
+    cast_top2 AS castTop2,director,metacritic_score AS metacriticScore,imdb_rating AS imdbRating,
+    rt_score AS rtScore,imdb_id AS imdbId,imdb_top250_rank AS imdbTop250Rank,providers
+    FROM shortlist ORDER BY title COLLATE NOCASE`).all();
+  res.json(titles.map(item => ({
+    ...item, genres: JSON.parse(item.genres || '[]'), castTop2: JSON.parse(item.castTop2 || '[]'),
+    providers: JSON.parse(item.providers || '[]')
+  })));
 });
 
-app.post('/api/shortlist', (req, res) => {
+app.post('/api/shortlist', asyncRoute(async (req, res) => {
   if (getSetting('voting_closed', 'false') === 'true') return res.status(403).json({ error: 'Shortlist editing is closed.' });
   const { source, sourceId, title, type, year, poster } = req.body || {};
   if (!['plex', 'tmdb'].includes(source) || !sourceId || !title || !['movie', 'tv'].includes(type)) {
     return res.status(400).json({ error: 'Incomplete title information.' });
+  }
+  if (source === 'tmdb' && !new RegExp(`^${type}:\\d+$`).test(String(sourceId))) {
+    return res.status(400).json({ error: 'Invalid TMDB title ID.' });
   }
   if (db.prepare('SELECT 1 FROM shortlist WHERE source=? AND source_id=?').get(source, String(sourceId))) {
     return res.status(409).json({ error: 'That title is already shortlisted.' });
@@ -244,11 +326,22 @@ app.post('/api/shortlist', (req, res) => {
   if (db.prepare('SELECT count(*) AS count FROM shortlist').get().count >= 20) {
     return res.status(409).json({ error: 'The shortlist is full (20 titles maximum).' });
   }
+  const details = await enrichShortlist({
+    source, sourceId: String(sourceId), title: String(title), type,
+    year: Number(year) || null
+  }, config());
   const id = `${source}:${sourceId}`;
-  db.prepare(`INSERT INTO shortlist (id,source,source_id,title,type,year,poster)
-    VALUES (?,?,?,?,?,?,?)`).run(id, source, String(sourceId), String(title), type, Number(year) || null, String(poster || ''));
+  db.prepare(`INSERT INTO shortlist
+    (id,source,source_id,title,type,year,poster,genres,cast_top2,director,metacritic_score,
+      imdb_rating,rt_score,imdb_id,imdb_top250_rank,providers)
+    VALUES (@id,@source,@sourceId,@title,@type,@year,@poster,@genres,@cast_top2,@director,
+      @metacritic_score,@imdb_rating,@rt_score,@imdb_id,@imdb_top250_rank,@providers)`)
+    .run({
+      id, source, sourceId: String(sourceId), title: String(title), type, year: Number(year) || null,
+      poster: String(poster || ''), ...details
+    });
   res.status(201).json({ id });
-});
+}));
 
 app.get('/api/ballot', (req, res) => {
   const voter = String(req.query.voter || '').trim().slice(0, 60);

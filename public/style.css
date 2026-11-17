@@ -69,20 +69,37 @@ p { color: var(--muted); line-height: 1.6; }
 .result-row button { text-align: left; background: none; border: 0; color: inherit; padding: 0; }
 .score { text-align: right; white-space: nowrap; font-weight: 850; }
 .score small { display: block; color: var(--muted); font-weight: 500; margin-top: 5px; }
-.ballot-list { display: grid; gap: 10px; }
-.ballot-row { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, auto); align-items: center; gap: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
-.ballot-title { display: flex; gap: 12px; align-items: center; min-width: 0; }
-.ballot-title .poster { width: 48px; height: 68px; border-radius: 7px; flex: 0 0 auto; }
-.ballot-controls { display: flex; align-items: center; gap: 10px; }
-.ballot-controls label { display: grid; justify-items: center; gap: 5px; color: var(--muted); font-size: .75rem; }
-.ballot-controls select { min-height: 40px; width: 72px; padding: 7px; }
-.ballot-controls input { accent-color: var(--accent); width: 18px; height: 18px; }
+.ballot-list { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.ballot-card { display: grid; grid-template-columns: 120px minmax(0, 1fr); align-items: start; gap: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.ballot-poster { display: block; width: 100%; padding: 0; overflow: hidden; border: 0; border-radius: 10px; background: #303747; }
+.ballot-poster .poster { width: 100%; aspect-ratio: 2 / 3; border-radius: 10px; }
+.ballot-content { display: grid; align-content: start; gap: 6px; min-width: 0; }
+.ballot-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.ballot-title { min-width: 0; padding: 0; border: 0; background: none; color: #f3f4f6; text-align: left; font-size: 1.08rem; font-weight: 800; line-height: 1.3; }
+.ballot-title:hover { color: var(--accent); }
+.ballot-source { flex: 0 0 auto; max-width: 45%; white-space: normal; text-align: center; }
+.ballot-critic { color: var(--accent); font-size: .78rem; font-weight: 700; line-height: 1.4; }
+.ballot-meta { color: #d7dbe4; font-size: .82rem; line-height: 1.35; overflow-wrap: anywhere; }
+.ballot-meta.subtle { color: var(--muted); font-size: .76rem; }
+.ballot-rank-note { color: var(--accent); }
+.ballot-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 6px; }
+.ballot-rank-group { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.control-caption { margin-right: 2px; color: var(--muted); font-size: .75rem; font-weight: 700; }
+.rank-button { min-width: 44px; min-height: 42px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #131722; color: white; font-weight: 800; }
+.rank-button[aria-pressed="true"] { border-color: var(--accent); background: #483c27; color: var(--accent); }
+.ballot-toggle { display: inline-flex; min-height: 42px; align-items: center; gap: 7px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font-size: .78rem; cursor: pointer; }
+.ballot-toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
+.ballot-toggle:has(input:checked) { border-color: #79653a; color: #f5d894; }
+.ballot-toggle input:disabled { cursor: not-allowed; }
 .field { display: grid; gap: 7px; margin: 14px 0; color: #e8eaf0; font-weight: 700; }
 .field small { color: var(--muted); font-weight: 400; }
 .checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
 .checks label { display: flex; align-items: center; gap: 9px; padding: 10px; background: #131722; border: 1px solid var(--line); border-radius: 10px; }
 .checks input { accent-color: var(--accent); }
 .checks .label-check { width: fit-content; border-radius: 99px; padding: 8px 12px; }
+.admin-grid.rating-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 8px; }
+.rating-unrated { display: flex; align-items: center; gap: 9px; min-height: 44px; color: var(--muted); font-size: .9rem; }
+.rating-unrated input { width: 18px; height: 18px; accent-color: var(--accent); }
 .manual-plex { margin: 20px 0 8px; border-top: 1px solid var(--line); padding-top: 16px; }
 .manual-plex summary { cursor: pointer; color: var(--muted); }
 .manual-plex[open] summary { margin-bottom: 14px; color: var(--accent); }
@@ -107,13 +124,17 @@ footer { margin-top: 46px; color: var(--muted); font-size: .84rem; text-align: c
   .nav { gap: 11px; font-size: .82rem; }
   .nav .admin-link { display: none; }
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
-  .ballot-row { grid-template-columns: 1fr; gap: 10px; }
-  .ballot-controls { justify-content: space-between; }
-  .ballot-controls label { grid-template-columns: auto auto; align-items: center; }
-  .ballot-controls select { width: 80px; }
+  .admin-grid.rating-filters { grid-template-columns: 1fr; }
+  .ballot-card { grid-template-columns: 110px minmax(0, 1fr); gap: 10px; padding: 10px; }
+  .ballot-heading { flex-wrap: wrap; }
+  .ballot-controls { gap: 7px; }
   .modal-content { grid-template-columns: 100px 1fr; gap: 14px; padding: 16px; }
   .modal-copy { align-self: start; padding-top: 30px; }
   .modal-content .poster { margin-top: 30px; }
   .result-row { grid-template-columns: 50px 1fr auto; gap: 10px; padding: 9px; }
   .result-row .poster { width: 50px; height: 72px; }
+}
+
+@media (min-width: 768px) {
+  .ballot-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

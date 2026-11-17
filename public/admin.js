@@ -20,13 +20,35 @@ function collectSettings() {
     sectionIds: sectionIds.value,
     labels: labelsInput.value,
     tmdbKey: document.getElementById('tmdb-key').value,
+    omdbKey: document.getElementById('omdb-key').value,
+    maxMovieRating: document.getElementById('max-movie-rating').value,
+    includeUnratedMovies: document.getElementById('include-unrated-movies').checked,
+    maxTvRating: document.getElementById('max-tv-rating').value,
+    includeUnratedTv: document.getElementById('include-unrated-tv').checked,
     providers: [...document.querySelectorAll('#provider-checks input:checked')].map(input => Number(input.value))
   };
 }
 
 async function saveSettings(showMessage = true) {
   await API.request('/api/admin/settings', { method: 'POST', body: JSON.stringify(collectSettings()) });
+  await refreshPlexStats();
   if (showMessage) showStatus('Settings saved.', true);
+}
+
+function renderPlexStats(counts) {
+  const status = document.getElementById('plex-stats');
+  status.textContent = `Library Cache: ${counts.moviesCount} Movies, ${counts.showsCount} TV Shows synced`;
+  status.className = 'status';
+}
+
+async function refreshPlexStats() {
+  const status = document.getElementById('plex-stats');
+  try {
+    renderPlexStats(await API.request('/api/plex/stats'));
+  } catch (error) {
+    status.textContent = `Library Cache unavailable: ${error.message}`;
+    status.className = 'status error';
+  }
 }
 
 function selectedIds() {
@@ -124,6 +146,11 @@ async function loadAdmin() {
     labelsInput.value = settings.labels;
     renderLabels(settings.labels ? settings.labels.split(',').map(value => value.trim()).filter(Boolean) : []);
     document.getElementById('tmdb-key').value = settings.tmdbKey;
+    document.getElementById('omdb-key').value = settings.omdbKey;
+    document.getElementById('max-movie-rating').value = settings.maxMovieRating;
+    document.getElementById('include-unrated-movies').checked = settings.includeUnratedMovies;
+    document.getElementById('max-tv-rating').value = settings.maxTvRating;
+    document.getElementById('include-unrated-tv').checked = settings.includeUnratedTv;
     const checks = document.getElementById('provider-checks');
     checks.replaceChildren(...settings.providerOptions.map(([name, id]) => {
       const label = document.createElement('label');
@@ -137,6 +164,7 @@ async function loadAdmin() {
     votingClosed = settings.votingClosed;
     renderVoting();
     renderShortlist(titles);
+    await refreshPlexStats();
     if (settings.plexToken) await initializePlex(settings);
   } catch (error) {
     showStatus(error.message);
@@ -266,8 +294,9 @@ document.getElementById('sync-plex').addEventListener('click', async event => {
   button.textContent = 'Syncing…';
   try {
     await saveSettings(false);
-    const { count } = await API.request('/api/admin/sync', { method: 'POST', body: '{}' });
-    showStatus(`Plex sync complete: ${count} titles.`, true);
+    const counts = await API.request('/api/admin/sync', { method: 'POST', body: '{}' });
+    renderPlexStats(counts);
+    showStatus(`Plex sync complete: ${counts.moviesCount} Movies, ${counts.showsCount} TV Shows.`, true);
   } catch (error) { showStatus(error.message); }
   finally {
     button.disabled = false;

@@ -1,7 +1,5 @@
-const { XMLParser } = require('fast-xml-parser');
 const db = require('./db');
 
-const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
 const PLEX_PRODUCT = 'Pick What We Watch';
 
 function plexUrl(path, base) {
@@ -65,14 +63,6 @@ async function plexServers(token, clientId) {
     .filter(Boolean);
 }
 
-async function plexRequest(path, config) {
-  const url = plexUrl(path, config.serverUrl);
-  url.searchParams.set('X-Plex-Token', config.plexToken);
-  const response = await fetch(url, { headers: { Accept: 'application/xml' } });
-  if (!response.ok) throw new Error(`Plex returned ${response.status} for ${path}`);
-  return parser.parse(await response.text());
-}
-
 async function plexJsonRequest(path, config) {
   const url = plexUrl(path, config.serverUrl);
   url.searchParams.set('X-Plex-Token', config.plexToken);
@@ -118,44 +108,71 @@ async function getLabels(sectionIds, config = {}) {
 
 async function syncLibraries(config) {
   if (!config.serverUrl || !config.plexToken) throw new Error('Configure the Plex URL and token first.');
-  const ids = config.sectionIds.split(',').map(value => value.trim()).filter(Boolean);
+  const ids = String(config.sectionIds || '').split(',').map(value => value.trim()).filter(Boolean);
   if (!ids.length) throw new Error('Enter at least one Plex library section ID.');
+  if (ids.some(id => !/^\d+$/.test(id))) throw new Error('Invalid Plex library section ID.');
 
-  const added = [];
+  const labelFilters = new Set((config.labels || []).map(label => String(label).trim().toLowerCase()).filter(Boolean));
+  const itemsById = new Map();
   for (const sectionId of ids) {
-    const sectionDoc = await plexRequest(`/library/sections/${encodeURIComponent(sectionId)}`, config);
-    const section = sectionDoc?.MediaContainer?.Directory;
-    if (!section) throw new Error(`Plex library section ${sectionId} was not found.`);
-    const type = section.type === 'show' ? 'tv' : section.type === 'movie' ? 'movie' : null;
-    if (!type) throw new Error(`Section ${sectionId} is not a Movie or TV Show library.`);
-
-    const endpointType = type === 'movie' ? 1 : 2;
-    const doc = await plexRequest(`/library/sections/${encodeURIComponent(sectionId)}/all?type=${endpointType}`, config);
-    const entries = array(doc?.MediaContainer?.Video ?? doc?.MediaContainer?.Directory);
+    let data;
+    try {
+      data = await plexJsonRequest(`/library/sections/${sectionId}/all`, config);
+    } catch (error) {
+      throw new Error(`Could not fetch Plex library ${sectionId}: ${error.message}`, { cause: error });
+    }
+    const entries = array(data?.MediaContainer?.Metadata);
     for (const item of entries) {
-      const labels = array(item.Label).map(label => label.tag?.toLowerCase()).filter(Boolean);
-      if (config.labels.length && !labels.some(label => config.labels.includes(label))) continue;
+      if (item.type !== 'movie' && item.type !== 'show') continue;
+      const labels = array(item.Label)
+        .map(label => String(label?.tag || '').trim().toLowerCase())
+        .filter(Boolean);
+      if (labelFilters.size && !labels.some(label => labelFilters.has(label))) continue;
       const genres = array(item.Genre).map(genre => genre.tag).filter(Boolean);
+      const castTop2 = array(item.Role).map(role => role.tag).filter(Boolean).slice(0, 2);
+      const director = array(item.Director).map(person => person.tag).find(Boolean) || '';
       const id = String(item.ratingKey ?? item.key);
       if (!id) continue;
-      added.push({
-        id, title: item.title || 'Untitled', type,
+      itemsById.set(id, {
+        id, title: item.title || 'Untitled', type: item.type === 'show' ? 'tv' : 'movie',
         year: Number(item.year) || null, summary: item.summary || '',
         poster: item.thumb ? `/api/plex-image?path=${encodeURIComponent(item.thumb)}` : '',
-        rating: item.contentRating || '', genres: JSON.stringify(genres), section_id: sectionId
+        rating: item.contentRating || '', genres: JSON.stringify(genres),
+        cast_top2: JSON.stringify(castTop2), director,
+        labels: JSON.stringify(labels), section_id: sectionId
       });
     }
   }
 
+  const items = [...itemsById.values()];
   const replace = db.transaction(items => {
     db.prepare('DELETE FROM plex_titles').run();
-    const insert = db.prepare(`INSERT INTO plex_titles
-      (id,title,type,year,summary,poster,rating,genres,section_id)
-      VALUES (@id,@title,@type,@year,@summary,@poster,@rating,@genres,@section_id)`);
+    const insert = db.prepare(`INSERT OR REPLACE INTO plex_titles
+      (id,title,type,year,summary,poster,rating,genres,section_id,labels,cast_top2,director)
+      VALUES (@id,@title,@type,@year,@summary,@poster,@rating,@genres,@section_id,@labels,@cast_top2,@director)`);
     for (const item of items) insert.run(item);
   });
-  replace(added);
-  return added.length;
+  try {
+    replace(items);
+  } catch (error) {
+    throw new Error(`Could not write Plex library cache: ${error.message}`, { cause: error });
+  }
+  return getSyncStats(config);
 }
 
-module.exports = { createPin, getLabels, getLibraries, plexRequest, plexServers, pollPin, syncLibraries };
+function getSyncStats(config) {
+  const sectionIds = String(config.sectionIds || '').split(',').map(value => value.trim()).filter(id => /^\d+$/.test(id));
+  if (!sectionIds.length) return { moviesCount: 0, showsCount: 0, totalCount: 0 };
+  const filters = new Set((config.labels || []).map(label => String(label).trim().toLowerCase()).filter(Boolean));
+  const placeholders = sectionIds.map(() => '?').join(',');
+  const rows = db.prepare(`SELECT type, labels FROM plex_titles WHERE section_id IN (${placeholders})`).all(...sectionIds);
+  const matching = rows.filter(row => {
+    if (!filters.size) return true;
+    return array(JSON.parse(row.labels || '[]')).some(label => filters.has(String(label).toLowerCase()));
+  });
+  const moviesCount = matching.filter(row => row.type === 'movie').length;
+  const showsCount = matching.filter(row => row.type === 'tv').length;
+  return { moviesCount, showsCount, totalCount: moviesCount + showsCount };
+}
+
+module.exports = { createPin, getLabels, getLibraries, getSyncStats, plexServers, pollPin, syncLibraries };

@@ -24,6 +24,7 @@
       <div class="field">Libraries to sync <small>Select Movie and TV Show libraries. TV syncs at series level.</small></div>
       <div id="library-checks" class="checks"></div>
       <p id="library-status" class="status" aria-live="polite"></p>
+      <p id="plex-stats" class="status" aria-live="polite">Library Cache: loading…</p>
       <div class="toolbar">
         <button id="load-libraries" class="button secondary" type="button">Load Libraries</button>
         <button id="sync-plex" class="button secondary" type="button">Sync Plex Libraries</button>
@@ -42,8 +43,37 @@
       </details>
       <h2 style="margin-top:30px">TMDB and streaming</h2>
       <label class="field">TMDB API Key<input id="tmdb-key" type="password" autocomplete="off"></label>
+      <label class="field">OMDb API Key (optional)<input id="omdb-key" type="password" autocomplete="off"></label>
       <p class="muted">Show only titles available to stream in the US on selected services.</p>
       <div id="provider-checks" class="checks"></div>
+      <h2 style="margin-top:30px">Content Rating Filters (Optional)</h2>
+      <div class="admin-grid rating-filters">
+        <div>
+          <label class="field">Max Movie Rating
+            <select id="max-movie-rating">
+              <option value="G">G (G only)</option>
+              <option value="PG">PG (Up to PG)</option>
+              <option value="PG-13">PG-13 (Up to PG-13)</option>
+              <option value="R">R (Up to R)</option>
+              <option value="ALL">ALL (All / No Limit, including NC-17)</option>
+            </select>
+          </label>
+          <label class="rating-unrated"><input id="include-unrated-movies" type="checkbox"> Display unrated / NR movies</label>
+        </div>
+        <div>
+          <label class="field">Max TV Show Rating
+            <select id="max-tv-rating">
+              <option value="TV-Y">TV-Y (TV-Y only)</option>
+              <option value="TV-Y7">TV-Y7 (Up to TV-Y7)</option>
+              <option value="TV-G">TV-G (Up to TV-G)</option>
+              <option value="TV-PG">TV-PG (Up to TV-PG)</option>
+              <option value="TV-14">TV-14 (Up to TV-14)</option>
+              <option value="ALL">ALL (All / No Limit, including TV-MA)</option>
+            </select>
+          </label>
+          <label class="rating-unrated"><input id="include-unrated-tv" type="checkbox" checked> Display unrated / NR TV shows</label>
+        </div>
+      </div>
       <p id="settings-status" class="status" aria-live="polite"></p>
       <button class="button" type="submit">Save settings</button>
     </form>
