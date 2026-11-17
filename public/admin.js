@@ -9,6 +9,8 @@ const labelsInput = document.getElementById('plex-labels');
 let votingClosed = false;
 let shortlistMaxSize = 20;
 let shortlistCount = 0;
+let roundMode = { votingMode: 'standard', roundStage: 'round1', finalistsCount: 10, roundId: '' };
+let roundProgressTimer;
 const fillGenreNames = [
   'Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary',
   'Drama', 'Family', 'Horror', 'Mystery', 'Romance', 'Sci-Fi / Fantasy'
@@ -17,15 +19,14 @@ const fillGenreNames = [
 function fillEras() {
   const year = new Date().getFullYear();
   const eras = [
-    [1910, 1928, '1910–1928'], [1929, 1949, '1929–1949'],
-    [1950, 1965, '1950–1965'], [1966, 1979, '1966–1979'],
-    [1980, 1989, '1980–1989'], [1990, 1999, '1990–1999'],
-    [2000, 2009, '2000–2009'], [2010, 2019, '2010–2019']
+    [1910, 1928, '1910–1928 (Silent Era)'], [1929, 1949, '1929–1949 (Golden Age)'],
+    [1950, 1965, '1950–1965 (Mid-Century)'], [1966, 1979, '1966–1979 (New Hollywood)'],
+    [1980, 1989, '1980–1989 (1980s)'], [1990, 1999, '1990–1999 (1990s)'],
+    [2000, 2009, '2000–2009 (2000s)'], [2010, 2019, '2010–2019 (2010s)']
   ];
   const currentDecade = Math.floor(year / 10) * 10;
   for (let start = 2020; start <= currentDecade; start += 10) {
-    const active = start === currentDecade;
-    eras.push([start, active ? year : start + 9, active ? `${start}–Present` : `${start}–${start + 9}`]);
+    eras.push([start, start + 9, `${start}–${start + 9} (${start}s)`]);
   }
   return eras.map(([start, end, label]) => ({ id: `${start}:${end}`, label }));
 }
@@ -200,6 +201,15 @@ async function loadAdmin() {
     document.getElementById('shortlist-max-size').value = settings.shortlistMaxSize;
     shortlistMaxSize = settings.shortlistMaxSize;
     renderFillFilters();
+    const fillOptions = settings.roundFillOptions || {};
+    for (const input of document.querySelectorAll('#fill-genres input')) {
+      input.checked = (fillOptions.genres || []).includes(input.value);
+    }
+    for (const input of document.querySelectorAll('#fill-eras input')) {
+      input.checked = (fillOptions.eras || []).includes(input.value);
+    }
+    if (fillOptions.minDuration != null) document.getElementById('fill-min-duration').value = fillOptions.minDuration;
+    if (fillOptions.maxDuration != null) document.getElementById('fill-max-duration').value = fillOptions.maxDuration;
     const checks = document.getElementById('provider-checks');
     checks.replaceChildren(...settings.providerOptions.map(([name, id]) => {
       const label = document.createElement('label');
@@ -211,7 +221,9 @@ async function loadAdmin() {
       return label;
     }));
     votingClosed = settings.votingClosed;
+    roundMode = settings;
     renderVoting();
+    renderRoundMode();
     renderShortlist(titles);
     await refreshPlexStats();
     if (settings.plexToken) await initializePlex(settings);
@@ -222,7 +234,8 @@ async function loadAdmin() {
 }
 
 function renderVoting() {
-  document.getElementById('voting-state').textContent = votingClosed ? 'Voting is closed.' : 'Voting is open.';
+  document.getElementById('voting-state').textContent =
+    `${votingClosed ? 'Voting is closed.' : 'Voting is open.'} ${roundMode.votingMode === 'two_round' ? `Build the List Together · ${roundMode.roundStage === 'draft' ? 'Draft review' : roundMode.roundStage === 'round2' ? 'Round 2' : 'Round 1'}` : 'Standard Mode'}`;
   document.getElementById('toggle-voting').textContent = votingClosed ? 'Reopen voting' : 'Close voting';
 }
 
@@ -236,10 +249,29 @@ function renderShortlist(items) {
     row.className = 'admin-item';
     const info = document.createElement('span');
     info.textContent = `${item.title}${item.year ? ` (${item.year})` : ''} · ${item.type === 'tv' ? 'TV Show' : 'Movie'}`;
+    const metadata = document.createElement('span');
+    metadata.className = 'admin-item-meta muted';
+    const source = item.source === 'plex' ? 'On Plex' : (item.providers || []).join(', ') || 'Streaming';
+    const sourceBadge = document.createElement('span');
+    sourceBadge.className = 'badge ballot-source';
+    sourceBadge.textContent = source;
+    const details = document.createElement('span');
+    const parts = [];
+    if (item.runtimeMins) parts.push(`${item.runtimeMins} min`);
+    if (item.tmdbVoteAverage != null) {
+      parts.push(`TMDB ${Number(item.tmdbVoteAverage).toFixed(1)} (${item.tmdbVoteCount || 0} votes)`);
+    }
+    if (item.metacriticScore) parts.push(`Metacritic ${item.metacriticScore}`);
+    if (item.imdbRating) parts.push(`IMDb ${item.imdbRating}`);
+    if (item.rtScore) parts.push(`RT ${item.rtScore}`);
+    details.textContent = parts.join(' · ');
+    metadata.append(sourceBadge, details);
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'button danger';
     remove.textContent = 'Remove';
+    remove.hidden = roundMode.votingMode === 'two_round' &&
+      Boolean(roundMode.roundId) && roundMode.roundStage !== 'draft';
     remove.addEventListener('click', async () => {
       try {
         await API.request(`/api/admin/shortlist/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
@@ -247,15 +279,93 @@ function renderShortlist(items) {
         renderShortlist(updated);
       } catch (error) { showStatus(error.message); }
     });
-    row.append(info, remove);
+    const copy = document.createElement('span');
+    copy.className = 'admin-item-copy';
+    copy.append(info, metadata);
+    row.append(copy, remove);
     list.append(row);
   }
-  document.getElementById('clear-shortlist').disabled = !items.length;
+  document.getElementById('clear-shortlist').disabled = !items.length ||
+    (roundMode.votingMode === 'two_round' && Boolean(roundMode.roundId) && roundMode.roundStage !== 'draft');
 }
 
 function renderShortlistCount() {
-  document.getElementById('shortlist-count').textContent = `${shortlistCount} / ${shortlistMaxSize} titles`;
-  document.getElementById('fill-shortlist').disabled = shortlistCount >= shortlistMaxSize;
+  const activeRound = roundMode.votingMode === 'two_round' && roundMode.roundId;
+  const label = activeRound && roundMode.roundStage === 'draft'
+    ? `Draft Pool: ${shortlistCount} / ${roundMode.finalistsCount * 6} items`
+    : activeRound && roundMode.roundStage === 'round1'
+    ? `${shortlistCount} / ${Math.max(shortlistCount, roundMode.roundPoolSize || 0)} Round 1 titles`
+    : activeRound && roundMode.roundStage === 'round2'
+      ? `${shortlistCount} finalists`
+      : `${shortlistCount} / ${shortlistMaxSize} titles`;
+  document.getElementById('shortlist-count').textContent = label;
+  document.getElementById('fill-shortlist').disabled =
+    shortlistCount >= shortlistMaxSize || roundMode.votingMode === 'two_round';
+}
+
+function renderRoundMode() {
+  const isTwoRound = roundMode.votingMode === 'two_round';
+  const isDraft = isTwoRound && roundMode.roundStage === 'draft' && Boolean(roundMode.roundId);
+  const isRound1 = isTwoRound && roundMode.roundStage === 'round1' && Boolean(roundMode.roundId);
+  document.getElementById('voting-mode').value = roundMode.votingMode;
+  document.getElementById('finalists-count').value = roundMode.finalistsCount || 10;
+  document.getElementById('finalists-setting').hidden = !isTwoRound;
+  document.getElementById('two-round-admin').hidden = !isTwoRound;
+  document.getElementById('generate-round1').hidden = isRound1;
+  document.getElementById('refill-round1').hidden = !isDraft;
+  document.getElementById('release-round1').hidden = !isDraft;
+  document.getElementById('round1-progress').hidden = !isRound1 && !(isTwoRound && roundMode.roundStage === 'round2');
+  document.getElementById('start-round2').hidden = !isRound1;
+  document.getElementById('round1-admin-status').textContent = isDraft
+    ? 'Review the draft pool, remove any titles you do not want, then re-fill or send it out for voting.'
+    : '';
+  if (roundProgressTimer) clearInterval(roundProgressTimer);
+  if (isRound1) {
+    refreshRound1Progress();
+    roundProgressTimer = setInterval(refreshRound1Progress, 4000);
+  } else {
+    document.getElementById('round1-progress').replaceChildren();
+    if (isTwoRound && roundMode.roundStage === 'round2') {
+      document.getElementById('round1-progress').textContent = 'Round 2 is active.';
+    }
+  }
+  renderShortlistCount();
+}
+
+async function refreshRound1Progress() {
+  if (roundMode.votingMode !== 'two_round' || roundMode.roundStage !== 'round1' || !roundMode.roundId) return;
+  try {
+    const progress = await API.request('/api/admin/round1/progress');
+    roundMode = { ...roundMode, ...progress, roundPoolSize: progress.poolSize };
+    if (progress.votingMode !== 'two_round' || progress.roundStage !== 'round1' || !progress.roundId) {
+      renderVoting();
+      renderRoundMode();
+      return;
+    }
+    const target = document.getElementById('round1-progress');
+    const rows = progress.voters.map(voter => {
+      const row = document.createElement('div');
+      row.className = `round-progress-row ${voter.done ? 'done' : ''}`;
+      const name = document.createElement('span');
+      name.textContent = voter.name;
+      const count = document.createElement('span');
+      count.textContent = `${voter.completed}/${progress.poolSize}${voter.done ? ' (Done)' : ''}`;
+      row.append(name, count);
+      return row;
+    });
+    if (!rows.length) {
+      const empty = document.createElement('span');
+      empty.textContent = `No voters yet · ${progress.poolSize} cards in the Round 1 pool.`;
+      rows.push(empty);
+    }
+    target.replaceChildren(...rows);
+    document.getElementById('start-round2').hidden = !progress.roundId;
+    renderShortlistCount();
+  } catch (error) {
+    const target = document.getElementById('round1-progress');
+    target.textContent = error.message;
+    target.className = 'round-progress status error';
+  }
 }
 
 function renderFillFilters() {
@@ -283,6 +393,15 @@ function setAllChecked(containerId, checked) {
   document.querySelectorAll(`#${containerId} input`).forEach(input => { input.checked = checked; });
 }
 
+function selectedFillOptions() {
+  return {
+    genres: [...document.querySelectorAll('#fill-genres input:checked')].map(input => input.value),
+    eras: [...document.querySelectorAll('#fill-eras input:checked')].map(input => input.value),
+    minDuration: Number(document.getElementById('fill-min-duration').value),
+    maxDuration: Number(document.getElementById('fill-max-duration').value)
+  };
+}
+
 for (const [buttonId, containerId, checked] of [
   ['genres-select-all', 'fill-genres', true], ['genres-clear', 'fill-genres', false],
   ['eras-select-all', 'fill-eras', true], ['eras-clear', 'fill-eras', false]
@@ -300,12 +419,7 @@ document.getElementById('fill-shortlist').addEventListener('click', async event 
     await saveSettings(false);
     const result = await API.request('/api/shortlist/fill', {
       method: 'POST',
-      body: JSON.stringify({
-        genres: [...document.querySelectorAll('#fill-genres input:checked')].map(input => input.value),
-        eras: [...document.querySelectorAll('#fill-eras input:checked')].map(input => input.value),
-        minDuration: Number(document.getElementById('fill-min-duration').value),
-        maxDuration: Number(document.getElementById('fill-max-duration').value)
-      })
+      body: JSON.stringify(selectedFillOptions())
     });
     renderShortlist(await API.request('/api/shortlist'));
     status.textContent = result.message || `Added ${result.addedCount} ${result.addedCount === 1 ? 'title' : 'titles'}.`;
@@ -427,11 +541,130 @@ document.getElementById('toggle-voting').addEventListener('click', async () => {
   } catch (error) { showStatus(error.message); }
 });
 
+document.getElementById('voting-mode').addEventListener('change', async event => {
+  try {
+    const finalistsCount = Number(document.getElementById('finalists-count').value);
+    if (!Number.isInteger(finalistsCount) || finalistsCount < 3 || finalistsCount > 25) {
+      throw new Error('Number of finalists must be from 3 to 25.');
+    }
+    roundMode = await API.request('/api/admin/voting-mode', {
+      method: 'POST',
+      body: JSON.stringify({ mode: event.currentTarget.value, finalistsCount })
+    });
+    roundMode.roundPoolSize = shortlistCount;
+    renderVoting();
+    renderRoundMode();
+    renderShortlistCount();
+  } catch (error) {
+    showStatus(error.message);
+    event.currentTarget.value = roundMode.votingMode;
+  }
+});
+
+document.getElementById('generate-round1').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  const status = document.getElementById('round1-admin-status');
+  const finalistsCount = Number(document.getElementById('finalists-count').value);
+  if (!Number.isInteger(finalistsCount) || finalistsCount < 3 || finalistsCount > 25) {
+    status.textContent = 'Number of finalists must be from 3 to 25.';
+    status.className = 'status error';
+    return;
+  }
+  button.disabled = true;
+  status.textContent = 'Generating the Round 1 draft pool…';
+  status.className = 'status';
+  try {
+    await saveSettings(false);
+    const result = await API.request('/api/admin/round1/generate', {
+      method: 'POST',
+      body: JSON.stringify({ finalistsCount, ...selectedFillOptions() })
+    });
+    roundMode = { ...roundMode, ...result, roundPoolSize: result.poolSize };
+    renderShortlist(await API.request('/api/shortlist'));
+    renderVoting();
+    renderRoundMode();
+    status.textContent = `Draft pool ready: ${result.poolSize} titles (${result.addedCount} added).`;
+    status.className = 'status success';
+  } catch (error) {
+    status.textContent = error.message;
+    status.className = 'status error';
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('refill-round1').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  const status = document.getElementById('round1-admin-status');
+  button.disabled = true;
+  status.textContent = 'Filling empty draft slots…';
+  status.className = 'status';
+  try {
+    await saveSettings(false);
+    const result = await API.request('/api/admin/round1/refill', {
+      method: 'POST',
+      body: JSON.stringify(selectedFillOptions())
+    });
+    roundMode.roundPoolSize = result.poolSize;
+    renderShortlist(await API.request('/api/shortlist'));
+    status.textContent = `Draft pool: ${result.poolSize} / ${result.targetSize} items (${result.addedCount} added).`;
+    status.className = result.addedCount ? 'status success' : 'status';
+  } catch (error) {
+    status.textContent = error.message;
+    status.className = 'status error';
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('release-round1').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  const status = document.getElementById('round1-admin-status');
+  try {
+    const result = await API.request('/api/admin/round1/release', { method: 'POST', body: '{}' });
+    roundMode = { ...roundMode, ...result, roundPoolSize: result.poolSize };
+    renderShortlist(await API.request('/api/shortlist'));
+    renderVoting();
+    renderRoundMode();
+    status.textContent = `Round 1 is open to guests with ${result.poolSize} titles.`;
+    status.className = 'status success';
+  } catch (error) {
+    status.textContent = error.message;
+    status.className = 'status error';
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('start-round2').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const result = await API.request('/api/admin/round2/start', { method: 'POST', body: '{}' });
+    roundMode.roundStage = result.roundStage;
+    renderShortlist(await API.request('/api/shortlist'));
+    renderVoting();
+    renderRoundMode();
+    document.getElementById('round1-admin-status').textContent =
+      `Round 2 started with ${result.finalistsCount} finalists.`;
+    document.getElementById('round1-admin-status').className = 'status success';
+  } catch (error) {
+    document.getElementById('round1-admin-status').textContent = error.message;
+    document.getElementById('round1-admin-status').className = 'status error';
+  } finally {
+    button.disabled = false;
+  }
+});
+
 document.getElementById('clear-shortlist').addEventListener('click', async () => {
   if (!window.confirm('Clear every title and ballot? This cannot be undone.')) return;
   try {
     await API.request('/api/admin/shortlist', { method: 'DELETE' });
+    roundMode.roundId = '';
+    roundMode.roundStage = roundMode.votingMode === 'two_round' ? 'draft' : 'round1';
     renderShortlist([]);
+    renderRoundMode();
   } catch (error) { showStatus(error.message); }
 });
 

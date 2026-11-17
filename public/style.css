@@ -84,6 +84,23 @@ p { color: var(--muted); line-height: 1.6; }
 .capacity-setting { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; padding: 4px 0 16px; }
 .capacity-setting .field { width: min(100%, 190px); margin: 0; }
 .capacity-setting small { color: var(--muted); }
+.two-round-settings { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; max-width: 700px; margin-top: 16px; }
+.round-admin { margin-top: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #13172288; }
+.round-progress { display: grid; gap: 7px; margin: 12px 0; color: var(--muted); }
+.round-progress-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 9px; background: #10141d; }
+.round-progress-row.done { color: #9de3b4; }
+.round-one { max-width: 680px; margin: 18px auto; }
+.round1-card { display: grid; grid-template-columns: minmax(120px, 220px) minmax(0, 1fr); gap: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); animation: round1-enter .2s ease-out; }
+@keyframes round1-enter { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: translateX(0); } }
+.round1-card .poster { border-radius: 12px; }
+.round1-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; min-width: 0; }
+.round1-copy h2 { margin: 0; }
+.round1-summary { margin: 0; color: var(--muted); line-height: 1.55; }
+.round1-votes { display: flex; gap: 12px; margin-top: 12px; }
+.round1-votes .button { min-width: 120px; min-height: 56px; font-size: 1.15rem; }
+.round1-votes .no-vote { background: #49272c; color: #ffd2d0; }
+.round1-votes .yes-vote { background: #244131; color: #b7f1c7; }
+.round1-ready { border-color: #3a8b57; box-shadow: 0 0 0 3px #3a8b5744; }
 .fill-generator { margin: 8px 0 22px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #13172288; }
 .fill-generator .section-head { margin: 0 0 10px; }
 .fill-generator h3 { margin: 0; }
@@ -152,6 +169,8 @@ p { color: var(--muted); line-height: 1.6; }
 .modal-actions { margin-top: 18px; }
 .admin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 18px; }
 .admin-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.admin-item-copy { display: grid; gap: 6px; min-width: 0; }
+.admin-item-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: .82rem; }
 .warning { color: var(--accent); }
 footer { margin-top: 46px; color: var(--muted); font-size: .84rem; text-align: center; }
 
@@ -169,6 +188,9 @@ footer { margin-top: 46px; color: var(--muted); font-size: .84rem; text-align: c
   .ballot-card { grid-template-columns: 110px minmax(0, 1fr); gap: 10px; padding: 10px; }
   .ballot-heading { flex-wrap: wrap; }
   .ballot-controls { gap: 7px; }
+  .round1-card { grid-template-columns: 105px minmax(0, 1fr); gap: 12px; padding: 12px; }
+  .round1-votes { gap: 8px; }
+  .round1-votes .button { min-width: 0; flex: 1; }
   .modal-content { grid-template-columns: 100px 1fr; gap: 14px; padding: 16px; }
   .modal-copy { align-self: start; padding-top: 30px; }
   .modal-content .poster { margin-top: 30px; }

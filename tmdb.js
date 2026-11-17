@@ -118,6 +118,11 @@ async function details(type, id, config) {
     ...creditMetadata(item, mediaType),
     summary: item.overview || '',
     rating,
+    runtimeMins: mediaType === 'movie'
+      ? Number(item.runtime) || null
+      : Number(item.episode_run_time?.[0] || item.last_episode_to_air?.runtime) || null,
+    tmdbVoteAverage: Number(item.vote_average) || null,
+    tmdbVoteCount: Number(item.vote_count) || null,
     providers: [...new Map(offers.filter(provider => active.has(Number(provider.provider_id)))
       .map(provider => [provider.provider_id, provider])).values()]
   };

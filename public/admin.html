@@ -104,6 +104,25 @@
       <p id="voting-state" class="muted"></p>
       <button id="toggle-voting" class="button secondary" type="button"></button>
       <a class="button secondary" href="/results" style="margin-left:7px">View results</a>
+      <div class="admin-grid two-round-settings">
+        <label class="field">Voting mode
+          <select id="voting-mode">
+            <option value="standard">Standard Mode (1-Round)</option>
+            <option value="two_round">Build the List Together (2-Round)</option>
+          </select>
+        </label>
+        <label id="finalists-setting" class="field" hidden>Number of Finalists
+          <input id="finalists-count" type="number" min="3" max="25" value="10">
+        </label>
+      </div>
+      <section id="two-round-admin" class="round-admin" hidden>
+        <button id="generate-round1" class="button" type="button">Generate Round 1 Pool</button>
+        <button id="refill-round1" class="button secondary" type="button" hidden>Re-Fill Empty Slots</button>
+        <button id="release-round1" class="button" type="button" hidden>Send Out for Round 1 Voting</button>
+        <p id="round1-admin-status" class="status" aria-live="polite"></p>
+        <div id="round1-progress" class="round-progress" aria-live="polite" hidden></div>
+        <button id="start-round2" class="button secondary" type="button" hidden>Confirm &amp; Start Round 2</button>
+      </section>
     </section>
     <section class="panel shortlist-manager">
       <div class="section-head"><h2>Shortlist Manager</h2><span id="shortlist-count" class="muted"></span></div>

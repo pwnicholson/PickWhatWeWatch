@@ -40,7 +40,8 @@ async function omdbDetails(title, year, imdbId, key) {
 
 async function enrichShortlist(item, config) {
   const plex = item.source === 'plex'
-    ? db.prepare('SELECT poster,summary,rating,genres,cast_top2,director FROM plex_titles WHERE id=?').get(item.sourceId)
+    ? db.prepare(`SELECT poster,summary,rating,genres,cast_top2,director,duration_mins,audience_rating
+        FROM plex_titles WHERE id=?`).get(item.sourceId)
     : null;
   let tmdbItem = null;
   if (config.tmdbKey) {
@@ -74,6 +75,9 @@ async function enrichShortlist(item, config) {
     rt_score: omdbItem?.rtScore || null,
     imdb_id: imdbId || null,
     imdb_top250_rank: imdbTop250[imdbId] || null,
+    runtime_mins: tmdbItem?.runtimeMins || plex?.duration_mins || null,
+    tmdb_vote_average: tmdbItem?.tmdbVoteAverage || null,
+    tmdb_vote_count: tmdbItem?.tmdbVoteCount || null,
     providers: JSON.stringify([...new Set((tmdbItem?.providers || []).map(provider => provider.provider_name).filter(Boolean))])
   };
 }

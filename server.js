@@ -9,7 +9,8 @@ const { enrichShortlist } = require('./metadata');
 const { isAllowedByRating, needsCertification } = require('./ratings');
 const tmdb = require('./tmdb');
 const {
-  fillGenres, fillEras, mapLimit, plexFillCandidates, sameTitle, shuffle, tmdbFillCandidates
+  fillGenres, fillEras, mapLimit, plexFillCandidates, sameTitle, shuffle, tmdbFillCandidates,
+  qualifyPlexCandidates
 } = require('./shortlist-fill');
 
 if (!process.env.ADMIN_PIN || !process.env.SESSION_SECRET) {
@@ -46,7 +47,11 @@ for (const [key, value] of Object.entries({
   max_movie_rating: 'ALL',
   include_unrated_movies: 'true',
   max_tv_rating: 'ALL',
-  include_unrated_tv: 'true'
+  include_unrated_tv: 'true',
+  voting_mode: 'standard',
+  round_stage: 'round1',
+  finalists_count: '10',
+  round1_id: ''
 })) {
   db.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)').run(key, value);
 }
@@ -54,6 +59,22 @@ for (const [key, value] of Object.entries({
 function shortlistMaxSize() {
   const size = Number(getSetting('shortlist_max_size', '20'));
   return Number.isInteger(size) && size >= 3 && size <= 100 ? size : 20;
+}
+
+function roundState() {
+  const mode = getSetting('voting_mode', 'standard');
+  const roundStage = getSetting('round_stage', 'round1');
+  const finalistsCount = Number(getSetting('finalists_count', '10'));
+  return {
+    votingMode: mode === 'two_round' ? 'two_round' : 'standard',
+    roundStage: ['draft', 'round1', 'round2'].includes(roundStage) ? roundStage : 'round1',
+    finalistsCount: Number.isInteger(finalistsCount) && finalistsCount >= 3 && finalistsCount <= 25 ? finalistsCount : 10,
+    roundId: getSetting('round1_id'),
+    roundFillOptions: (() => {
+      try { return JSON.parse(getSetting('round1_fill_options', '{}')); }
+      catch { return {}; }
+    })()
+  };
 }
 
 function getPlexClientId() {
@@ -95,9 +116,9 @@ function asyncRoute(handler) {
 
 const insertShortlistRow = db.prepare(`INSERT INTO shortlist
   (id,source,source_id,title,type,year,poster,summary,content_rating,genres,cast_top2,director,metacritic_score,
-    imdb_rating,rt_score,imdb_id,imdb_top250_rank,providers)
+    imdb_rating,rt_score,imdb_id,imdb_top250_rank,providers,runtime_mins,tmdb_vote_average,tmdb_vote_count)
   VALUES (@id,@source,@sourceId,@title,@type,@year,@poster,@summary,@content_rating,@genres,@cast_top2,@director,
-    @metacritic_score,@imdb_rating,@rt_score,@imdb_id,@imdb_top250_rank,@providers)`);
+    @metacritic_score,@imdb_rating,@rt_score,@imdb_id,@imdb_top250_rank,@providers,@runtime_mins,@tmdb_vote_average,@tmdb_vote_count)`);
 
 function saveShortlistItem(item, details) {
   const id = `${item.source}:${item.sourceId}`;
@@ -105,6 +126,83 @@ function saveShortlistItem(item, details) {
     id, source: item.source, sourceId: String(item.sourceId), title: item.title, type: item.type, year: item.year,
     ...details, poster: details.poster || item.poster || ''
   });
+}
+
+function parseFillOptions(body = {}) {
+  const requestedGenres = body.genres ?? [];
+  const requestedEraIds = body.eras ?? [];
+  if (!Array.isArray(requestedGenres) || requestedGenres.some(name => !Object.hasOwn(fillGenres, name)) ||
+      !Array.isArray(requestedEraIds)) throw new Error('Invalid genre or era selection.');
+  const availableEras = new Map(fillEras().map(era => [era.id, era]));
+  const eraIds = [...new Set(requestedEraIds.map(String))];
+  if (eraIds.some(id => !availableEras.has(id))) throw new Error('Invalid era selection.');
+  const minDuration = Number(body.minDuration ?? 0);
+  const maxDuration = Number(body.maxDuration ?? 9999);
+  if (![0, 30, 45, 60, 75, 90, 105, 120].includes(minDuration) ||
+      ![9999, 45, 60, 90, 105, 120, 135, 150, 180].includes(maxDuration)) {
+    throw new Error('Invalid runtime duration selection.');
+  }
+  return {
+    genres: [...new Set(requestedGenres)],
+    eras: eraIds.map(id => availableEras.get(id)),
+    minDuration, maxDuration
+  };
+}
+
+async function fillShortlistTo(targetSize, settings, options) {
+  const currentCount = db.prepare('SELECT count(*) AS count FROM shortlist').get().count;
+  const needed = targetSize - currentCount;
+  if (needed <= 0) return { addedCount: 0, newTotal: currentCount };
+  const plex = await qualifyPlexCandidates(
+    plexFillCandidates(settings, options.genres, options.eras, options.minDuration, options.maxDuration),
+    settings.tmdbKey, options.eras
+  );
+  const streaming = await tmdbFillCandidates(
+    settings, options.genres, options.eras, needed, options.minDuration, options.maxDuration
+  );
+  const known = db.prepare('SELECT source,source_id AS sourceId,title,type,year FROM shortlist').all();
+  const candidates = [];
+  for (const item of [...plex, ...streaming]) {
+    if (known.some(existing =>
+      (existing.source === item.source && existing.sourceId === item.sourceId) || sameTitle(existing, item)
+    )) continue;
+    known.push(item);
+    candidates.push(item);
+  }
+  const selected = shuffle(candidates).slice(0, needed);
+  const enriched = await mapLimit(selected, 4, async item => ({
+    item, details: await enrichShortlist(item, settings)
+  }));
+  return db.transaction(items => {
+    let total = db.prepare('SELECT count(*) AS count FROM shortlist').get().count;
+    const existing = db.prepare('SELECT source,source_id AS sourceId,title,type,year FROM shortlist').all();
+    let addedCount = 0;
+    for (const { item, details } of items) {
+      if (total >= targetSize) break;
+      if (existing.some(row =>
+        (row.source === item.source && row.sourceId === item.sourceId) || sameTitle(row, item)
+      )) continue;
+      saveShortlistItem(item, details);
+      existing.push(item);
+      total++;
+      addedCount++;
+    }
+    return { addedCount, newTotal: total };
+  })(enriched);
+}
+
+function shortlistTitles() {
+  return db.prepare(`SELECT s.id,s.source,s.source_id AS sourceId,s.title,s.type,s.year,s.poster,s.summary,
+    s.content_rating AS contentRating,s.genres,s.cast_top2 AS castTop2,s.director,
+    s.metacritic_score AS metacriticScore,s.imdb_rating AS imdbRating,s.rt_score AS rtScore,
+    s.imdb_id AS imdbId,s.imdb_top250_rank AS imdbTop250Rank,s.providers,
+    COALESCE(s.runtime_mins, p.duration_mins) AS runtimeMins,
+    s.tmdb_vote_average AS tmdbVoteAverage,s.tmdb_vote_count AS tmdbVoteCount
+    FROM shortlist s LEFT JOIN plex_titles p ON s.source='plex' AND p.id=s.source_id
+    ORDER BY s.title COLLATE NOCASE`).all().map(item => ({
+    ...item, genres: JSON.parse(item.genres || '[]'), castTop2: JSON.parse(item.castTop2 || '[]'),
+    providers: JSON.parse(item.providers || '[]')
+  }));
 }
 
 app.post('/api/admin/login', (req, res) => {
@@ -140,7 +238,9 @@ app.get('/api/admin/settings', adminOnly, (req, res) => {
     maxTvRating: c.max_tv_rating, includeUnratedTv: c.include_unrated_tv,
     shortlistMaxSize: c.shortlistMaxSize,
     providers: c.providers, providerOptions: providers,
-    votingClosed: getSetting('voting_closed', 'false') === 'true'
+    votingClosed: getSetting('voting_closed', 'false') === 'true',
+    ...roundState(),
+    roundPoolSize: db.prepare('SELECT count(*) AS count FROM shortlist').get().count
   });
 });
 
@@ -250,22 +350,189 @@ app.post('/api/admin/voting', adminOnly, (req, res) => {
   res.json({ closed: req.body?.closed === true });
 });
 
+app.post('/api/admin/voting-mode', adminOnly, (req, res) => {
+  const mode = String(req.body?.mode || '');
+  const finalistsCount = Number(req.body?.finalistsCount);
+  if (!['standard', 'two_round'].includes(mode)) {
+    return res.status(400).json({ error: 'Invalid voting mode.' });
+  }
+  if (!Number.isInteger(finalistsCount) || finalistsCount < 3 || finalistsCount > 25) {
+    return res.status(400).json({ error: 'Number of finalists must be from 3 to 25.' });
+  }
+  if (mode !== getSetting('voting_mode', 'standard')) {
+    db.prepare('DELETE FROM round1_votes').run();
+    setSetting('round1_id', '');
+    setSetting('round_stage', mode === 'two_round' ? 'draft' : 'round1');
+  }
+  setSetting('voting_mode', mode);
+  setSetting('finalists_count', finalistsCount);
+  res.json(roundState());
+});
+
+app.post('/api/admin/round1/generate', adminOnly, asyncRoute(async (req, res) => {
+  const finalistsCount = Number(req.body?.finalistsCount);
+  if (!Number.isInteger(finalistsCount) || finalistsCount < 3 || finalistsCount > 25) {
+    return res.status(400).json({ error: 'Number of finalists must be from 3 to 25.' });
+  }
+  let options;
+  try { options = parseFillOptions(req.body); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
+
+  const poolSize = finalistsCount * 6;
+  const currentCount = db.prepare('SELECT count(*) AS count FROM shortlist').get().count;
+  const result = await fillShortlistTo(Math.max(poolSize, currentCount), config(), options);
+  if (!result.newTotal) return res.status(400).json({ error: 'Add titles to the shortlist or configure a source before generating the Round 1 pool.' });
+
+  const roundId = randomUUID();
+  const startRound = db.transaction(() => {
+    db.prepare('DELETE FROM round1_votes').run();
+    db.prepare('DELETE FROM ballots').run();
+    setSetting('voting_mode', 'two_round');
+    setSetting('round_stage', 'draft');
+    setSetting('finalists_count', finalistsCount);
+    setSetting('round1_id', roundId);
+    setSetting('round1_fill_options', JSON.stringify(options));
+    setSetting('voting_closed', 'false');
+  });
+  startRound();
+  res.json({ ...roundState(), poolSize: result.newTotal, addedCount: result.addedCount });
+}));
+
+app.post('/api/admin/round1/refill', adminOnly, asyncRoute(async (req, res) => {
+  const state = roundState();
+  if (state.votingMode !== 'two_round' || state.roundStage !== 'draft' || !state.roundId) {
+    return res.status(409).json({ error: 'The Round 1 pool can only be re-filled during draft review.' });
+  }
+  let options;
+  try { options = parseFillOptions(req.body); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
+  const targetSize = state.finalistsCount * 6;
+  const result = await fillShortlistTo(targetSize, config(), options);
+  setSetting('round1_fill_options', JSON.stringify(options));
+  res.json({ ...result, poolSize: result.newTotal, targetSize });
+}));
+
+app.post('/api/admin/round1/release', adminOnly, (req, res) => {
+  const state = roundState();
+  if (state.votingMode !== 'two_round' || state.roundStage !== 'draft' || !state.roundId) {
+    return res.status(409).json({ error: 'There is no Round 1 draft to release.' });
+  }
+  const poolSize = db.prepare('SELECT count(*) AS count FROM shortlist').get().count;
+  if (poolSize < state.finalistsCount + 1) {
+    return res.status(400).json({
+      error: `The pool needs at least ${state.finalistsCount + 1} items before Round 1 can start.`
+    });
+  }
+  setSetting('round_stage', 'round1');
+  setSetting('voting_closed', 'false');
+  res.json({ ...roundState(), poolSize });
+});
+
+app.get('/api/admin/round1/progress', adminOnly, (req, res) => {
+  const state = roundState();
+  const poolSize = db.prepare('SELECT count(*) AS count FROM shortlist').get().count;
+  const voters = db.prepare(`SELECT v.voter_name AS name, count(DISTINCT v.item_id) AS completed
+    FROM round1_votes v JOIN shortlist s ON s.id = v.item_id
+    GROUP BY v.voter_name COLLATE NOCASE ORDER BY v.voter_name COLLATE NOCASE`).all()
+    .map(voter => ({ ...voter, done: poolSize > 0 && voter.completed >= poolSize }));
+  res.json({ ...state, poolSize, voters });
+});
+
+app.post('/api/admin/round2/start', adminOnly, (req, res) => {
+  const state = roundState();
+  if (state.votingMode !== 'two_round' || state.roundStage !== 'round1' || !state.roundId) {
+    return res.status(409).json({ error: 'There is no active Round 1 pool.' });
+  }
+  const items = db.prepare('SELECT id FROM shortlist').all();
+  if (!items.length) return res.status(400).json({ error: 'The Round 1 pool is empty.' });
+  const yesVotes = new Map(db.prepare(`SELECT item_id AS id, count(*) AS votes FROM round1_votes
+    WHERE vote = 1 GROUP BY item_id`).all().map(row => [row.id, row.votes]));
+  const groups = new Map();
+  for (const item of items) {
+    const votes = yesVotes.get(item.id) || 0;
+    if (!groups.has(votes)) groups.set(votes, []);
+    groups.get(votes).push(item);
+  }
+  const ordered = [...groups.keys()].sort((a, b) => b - a)
+    .flatMap(votes => shuffle(groups.get(votes)));
+  const finalists = ordered.slice(0, state.finalistsCount).map(item => item.id);
+  const beginRound2 = db.transaction(ids => {
+    const keep = ids.map(() => '?').join(',');
+    db.prepare(`DELETE FROM shortlist WHERE id NOT IN (${keep})`).run(...ids);
+    setSetting('round_stage', 'round2');
+  });
+  beginRound2(finalists);
+  res.json({ roundStage: 'round2', finalistsCount: finalists.length });
+});
+
 app.delete('/api/admin/shortlist/:id', adminOnly, (req, res) => {
+  const state = roundState();
+  if (state.votingMode === 'two_round' && state.roundId && state.roundStage !== 'draft') {
+    return res.status(409).json({ error: 'The shortlist is locked during two-round voting.' });
+  }
   db.prepare('DELETE FROM shortlist WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
 app.delete('/api/admin/shortlist', adminOnly, (req, res) => {
-  db.prepare('DELETE FROM shortlist').run();
-  db.prepare('DELETE FROM ballots').run();
+  const state = roundState();
+  if (state.votingMode === 'two_round' && state.roundId && state.roundStage !== 'draft') {
+    return res.status(409).json({ error: 'The shortlist is locked during two-round voting.' });
+  }
+  db.transaction(() => {
+    db.prepare('DELETE FROM shortlist').run();
+    db.prepare('DELETE FROM ballots').run();
+    db.prepare('DELETE FROM round1_votes').run();
+    setSetting('round1_id', '');
+    setSetting('round_stage', getSetting('voting_mode', 'standard') === 'two_round' ? 'draft' : 'round1');
+  })();
   res.json({ ok: true });
 });
 
 app.get('/api/status', (req, res) => res.json({
   votingClosed: getSetting('voting_closed', 'false') === 'true',
   shortlistCount: db.prepare('SELECT count(*) AS count FROM shortlist').get().count,
-  shortlistMaxSize: shortlistMaxSize()
+  shortlistMaxSize: shortlistMaxSize(),
+  ...roundState()
 }));
+
+app.get('/api/session/status', (req, res) => res.json({
+  votingClosed: getSetting('voting_closed', 'false') === 'true',
+  shortlistCount: db.prepare('SELECT count(*) AS count FROM shortlist').get().count,
+  ...roundState()
+}));
+
+app.get('/api/round1/pool', (req, res) => {
+  const state = roundState();
+  if (state.votingMode !== 'two_round' || state.roundStage !== 'round1' || !state.roundId) {
+    return res.status(409).json({ error: 'Round 1 is not active.' });
+  }
+  const voter = String(req.query.voter || '').trim().slice(0, 60);
+  const items = shortlistTitles();
+  const votes = Object.fromEntries(db.prepare(`SELECT item_id AS id, vote FROM round1_votes
+    WHERE voter_name = ? COLLATE NOCASE`).all(voter).map(vote => [vote.id, vote.vote]));
+  res.json({ roundId: state.roundId, items, votes });
+});
+
+app.post('/api/round1/vote', (req, res) => {
+  const state = roundState();
+  if (state.votingMode !== 'two_round' || state.roundStage !== 'round1' || !state.roundId) {
+    return res.status(409).json({ error: 'Round 1 is not active.' });
+  }
+  if (getSetting('voting_closed', 'false') === 'true') return res.status(403).json({ error: 'Voting is closed.' });
+  const voter = String(req.body?.voter || '').trim().slice(0, 60);
+  const itemId = String(req.body?.itemId || '');
+  const vote = req.body?.vote;
+  if (!voter) return res.status(400).json({ error: 'Enter your name before voting.' });
+  if (!itemId || ![0, 1].includes(vote)) return res.status(400).json({ error: 'Choose Yes or No for a title.' });
+  if (!db.prepare('SELECT 1 FROM shortlist WHERE id = ?').get(itemId)) {
+    return res.status(400).json({ error: 'That title is no longer in the Round 1 pool.' });
+  }
+  db.prepare(`INSERT INTO round1_votes (voter_name,item_id,vote,updated_at) VALUES (?,?,?,?)
+    ON CONFLICT(voter_name,item_id) DO UPDATE SET vote=excluded.vote,updated_at=excluded.updated_at`)
+    .run(voter, itemId, vote, new Date().toISOString());
+  res.json({ ok: true });
+});
 
 app.get('/api/config/status', (req, res) => {
   const c = config();
@@ -343,88 +610,34 @@ app.get('/api/plex-image', asyncRoute(async (req, res) => {
 }));
 
 app.post('/api/shortlist/fill', adminOnly, asyncRoute(async (req, res) => {
+  if (roundState().votingMode === 'two_round' && roundState().roundId) {
+    return res.status(409).json({ error: 'Use Generate Round 1 Pool to change a two-round shortlist.' });
+  }
   if (getSetting('voting_closed', 'false') === 'true') {
     return res.status(403).json({ error: 'Shortlist editing is closed.' });
   }
   const settings = config();
+  let options;
+  try { options = parseFillOptions(req.body); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
   const currentCount = db.prepare('SELECT count(*) AS count FROM shortlist').get().count;
-  const needed = settings.shortlistMaxSize - currentCount;
-  if (needed <= 0) {
-    return res.json({ addedCount: 0, newTotal: currentCount, message: 'Shortlist is already full' });
-  }
-
-  const requestedGenres = req.body?.genres ?? [];
-  const requestedEraIds = req.body?.eras ?? [];
-  if (!Array.isArray(requestedGenres) || requestedGenres.some(name => !Object.hasOwn(fillGenres, name)) ||
-      !Array.isArray(requestedEraIds)) {
-    return res.status(400).json({ error: 'Invalid genre or era selection.' });
-  }
-  const availableEras = new Map(fillEras().map(era => [era.id, era]));
-  const eraIds = [...new Set(requestedEraIds.map(String))];
-  if (eraIds.some(id => !availableEras.has(id))) {
-    return res.status(400).json({ error: 'Invalid era selection.' });
-  }
-  const genreNames = [...new Set(requestedGenres)];
-  const eras = eraIds.map(id => availableEras.get(id));
-  const minDuration = Number(req.body?.minDuration ?? 0);
-  const maxDuration = Number(req.body?.maxDuration ?? 9999);
-  if (![0, 30, 45, 60, 75, 90, 105, 120].includes(minDuration) ||
-      ![9999, 45, 60, 90, 105, 120, 135, 150, 180].includes(maxDuration)) {
-    return res.status(400).json({ error: 'Invalid runtime duration selection.' });
-  }
-  const plex = plexFillCandidates(settings, genreNames, eras, minDuration, maxDuration);
-  const streaming = await tmdbFillCandidates(settings, genreNames, eras, needed, minDuration, maxDuration);
-  const shortlist = db.prepare('SELECT source,source_id AS sourceId,title,type,year FROM shortlist').all();
-  const known = [...shortlist];
-  const candidates = [];
-  for (const item of [...plex, ...streaming]) {
-    if (known.some(existing =>
-      (existing.source === item.source && existing.sourceId === item.sourceId) || sameTitle(existing, item)
-    )) continue;
-    known.push(item);
-    candidates.push(item);
-  }
-  const selected = shuffle(candidates).slice(0, needed);
-  const enriched = await mapLimit(selected, 4, async item => ({
-    item, details: await enrichShortlist(item, settings)
-  }));
-  const addItems = db.transaction(items => {
-    let total = db.prepare('SELECT count(*) AS count FROM shortlist').get().count;
-    const maxSize = shortlistMaxSize();
-    const existing = db.prepare('SELECT source,source_id AS sourceId,title,type,year FROM shortlist').all();
-    let addedCount = 0;
-    for (const { item, details } of items) {
-      if (total >= maxSize) break;
-      if (existing.some(row =>
-        (row.source === item.source && row.sourceId === item.sourceId) || sameTitle(row, item)
-      )) continue;
-      saveShortlistItem(item, details);
-      existing.push(item);
-      total++;
-      addedCount++;
-    }
-    return { addedCount, newTotal: total };
-  });
-  const result = addItems(enriched);
+  const result = await fillShortlistTo(settings.shortlistMaxSize, settings, options);
   res.json({
     ...result,
-    ...(result.addedCount ? {} : { message: 'No matching titles found.' })
+    ...(result.addedCount ? {} : {
+      message: currentCount >= settings.shortlistMaxSize ? 'Shortlist is already full' : 'No matching titles found.'
+    })
   });
 }));
 
 app.get('/api/shortlist', (req, res) => {
-  const titles = db.prepare(`SELECT id,source,source_id AS sourceId,title,type,year,poster,summary,
-    content_rating AS contentRating,genres,
-    cast_top2 AS castTop2,director,metacritic_score AS metacriticScore,imdb_rating AS imdbRating,
-    rt_score AS rtScore,imdb_id AS imdbId,imdb_top250_rank AS imdbTop250Rank,providers
-    FROM shortlist ORDER BY title COLLATE NOCASE`).all();
-  res.json(titles.map(item => ({
-    ...item, genres: JSON.parse(item.genres || '[]'), castTop2: JSON.parse(item.castTop2 || '[]'),
-    providers: JSON.parse(item.providers || '[]')
-  })));
+  res.json(shortlistTitles());
 });
 
 app.post('/api/shortlist', asyncRoute(async (req, res) => {
+  if (roundState().votingMode === 'two_round' && roundState().roundId) {
+    return res.status(403).json({ error: 'The shortlist is locked during two-round voting.' });
+  }
   if (getSetting('voting_closed', 'false') === 'true') return res.status(403).json({ error: 'Shortlist editing is closed.' });
   const { source, sourceId, title, type, year, poster } = req.body || {};
   if (!['plex', 'tmdb'].includes(source) || !sourceId || !title || !['movie', 'tv'].includes(type)) {
@@ -465,6 +678,14 @@ app.get('/api/ballot', (req, res) => {
 });
 
 app.post('/api/ballot', (req, res) => {
+  const state = roundState();
+  if (state.votingMode === 'two_round' && state.roundStage !== 'round2') {
+    return res.status(409).json({
+      error: state.roundStage === 'draft'
+        ? 'The host has not opened Round 1 voting yet.'
+        : 'Use the Round 1 card-by-card ballot.'
+    });
+  }
   if (getSetting('voting_closed', 'false') === 'true') return res.status(403).json({ error: 'Voting is closed.' });
   const voter = String(req.body?.voter || '').trim().slice(0, 60);
   const ranks = Array.isArray(req.body?.ranks) ? req.body.ranks.map(String) : [];

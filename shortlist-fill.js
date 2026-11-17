@@ -20,21 +20,31 @@ const fillGenres = {
 function fillEras() {
   const year = new Date().getFullYear();
   const eras = [
-    { start: 1910, end: 1928, label: '1910–1928' },
-    { start: 1929, end: 1949, label: '1929–1949' },
-    { start: 1950, end: 1965, label: '1950–1965' },
-    { start: 1966, end: 1979, label: '1966–1979' },
-    { start: 1980, end: 1989, label: '1980–1989' },
-    { start: 1990, end: 1999, label: '1990–1999' },
-    { start: 2000, end: 2009, label: '2000–2009' },
-    { start: 2010, end: 2019, label: '2010–2019' }
+    { start: 1910, end: 1928, label: '1910–1928 (Silent Era)' },
+    { start: 1929, end: 1949, label: '1929–1949 (Golden Age)' },
+    { start: 1950, end: 1965, label: '1950–1965 (Mid-Century)' },
+    { start: 1966, end: 1979, label: '1966–1979 (New Hollywood)' },
+    { start: 1980, end: 1989, label: '1980–1989 (1980s)' },
+    { start: 1990, end: 1999, label: '1990–1999 (1990s)' },
+    { start: 2000, end: 2009, label: '2000–2009 (2000s)' },
+    { start: 2010, end: 2019, label: '2010–2019 (2010s)' }
   ];
   const currentDecade = Math.floor(year / 10) * 10;
   for (let start = 2020; start <= currentDecade; start += 10) {
-    const active = start === currentDecade;
-    eras.push({ start, end: active ? year : start + 9, label: active ? `${start}–Present` : `${start}–${start + 9}` });
+    eras.push({ start, end: start + 9, label: `${start}–${start + 9} (${start}s)` });
   }
   return eras.map(era => ({ ...era, id: `${era.start}:${era.end}` }));
+}
+
+function getMinVoteCount(mediaType, startYear) {
+  const isMovie = mediaType === 'movie';
+  if (startYear == null || startYear === '') return isMovie ? 1500 : 1000;
+  const year = Number(startYear);
+  if (!Number.isFinite(year)) return isMovie ? 1500 : 1000;
+  const thresholds = isMovie
+    ? [[1910, 200], [1929, 350], [1950, 600], [1966, 1000], [1980, 1500], [1990, 2000], [2000, 2250], [2010, 2500], [2020, 2000]]
+    : [[1910, 200], [1929, 200], [1950, 200], [1966, 300], [1980, 450], [1990, 750], [2000, 1100], [2010, 1500], [2020, 1250]];
+  return Math.max(200, thresholds.findLast(([start]) => year >= start)?.[1] ?? 200);
 }
 
 function shuffle(items) {
@@ -99,7 +109,7 @@ function plexFillCandidates(settings, genreNames, eras, minDuration = 0, maxDura
     )) return false;
     if (!isAllowedByRating(item.type, item.rating, settings)) return false;
     const audienceRating = storedAudienceRating(item);
-    if (audienceRating != null && audienceRating < 7.3) return false;
+    if (audienceRating != null && audienceRating < 8.0) return false;
     const rawRuntime = item.duration_mins;
     const runtime = rawRuntime == null || rawRuntime === '' ? null : Number(rawRuntime);
     const hasRuntime = Number.isFinite(runtime) && runtime > 0;
@@ -123,8 +133,8 @@ function tmdbDiscoverFilters(type, genreIds, era, settings, page, minDuration, m
     with_watch_providers: settings.providers.join('|'),
     with_watch_monetization_types: 'flatrate|free|ads',
     with_genres: genreIds.join('|'),
-    'vote_average.gte': isMovie ? '7.2' : '7.3',
-    'vote_count.gte': isMovie ? '1250' : '750',
+    'vote_average.gte': '8.0',
+    'vote_count.gte': String(getMinVoteCount(type, era?.start)),
     page
   };
   if (isMovie) {
@@ -146,16 +156,32 @@ function tmdbDiscoverFilters(type, genreIds, era, settings, page, minDuration, m
   return filters;
 }
 
-function meetsTmdbQuality(item, type) {
+function meetsTmdbQuality(item, type, minVotes = getMinVoteCount(type, null)) {
   const votes = Number(item.vote_count);
   const rating = Number(item.vote_average);
-  if (!Number.isFinite(votes) || !Number.isFinite(rating)) return false;
-  if (type === 'movie') {
-    if (votes < 1250) return false;
-    return rating >= (votes >= 8000 ? 7.2 : votes >= 3000 ? 7.4 : 7.7);
-  }
-  if (votes < 750) return false;
-  return rating >= (votes >= 5000 ? 7.3 : votes >= 2000 ? 7.5 : 7.8);
+  return (type === 'movie' || type === 'tv') &&
+    Number.isFinite(votes) && votes >= minVotes &&
+    Number.isFinite(rating) && rating >= 8.0;
+}
+
+async function qualifyPlexCandidates(items, key, eras = []) {
+  if (!key || !items.length) return [];
+  return (await mapLimit(items, 6, async item => {
+    const mediaType = item.type === 'tv' ? 'tv' : 'movie';
+    const era = eras.find(selected => item.year >= selected.start && item.year <= selected.end);
+    const minVotes = getMinVoteCount(mediaType, era?.start);
+    const query = new URLSearchParams({ query: item.title, include_adult: 'false' });
+    if (item.year) query.set(mediaType === 'tv' ? 'first_air_date_year' : 'year', String(item.year));
+    const result = await tmdb.tmdb(`/search/${mediaType}?${query}`, key);
+    const match = (result.results || []).find(candidate => {
+      const title = mediaType === 'tv' ? candidate.name : candidate.title;
+      const year = Number(String(mediaType === 'tv' ? candidate.first_air_date || '' : candidate.release_date || '').slice(0, 4));
+      return normalizeTitle(title) === normalizeTitle(item.title) &&
+        (!item.year || !year || Math.abs(Number(item.year) - year) <= 1) &&
+        meetsTmdbQuality(candidate, mediaType, minVotes);
+    });
+    return match ? item : null;
+  })).filter(Boolean);
 }
 
 function tmdbRuntime(item) {
@@ -190,14 +216,15 @@ async function tmdbFillCandidates(settings, genreNames, eras, needed, minDuratio
         type: job.type === 'movie' ? 'movie' : 'tv', year,
         poster: item.poster_path ? `https://image.tmdb.org/t/p/w342${item.poster_path}` : '',
         certification: item.certification, voteCount: item.vote_count, voteAverage: item.vote_average,
-        runtime: job.type === 'tv' ? tmdbRuntime(item) : item.runtime
+        runtime: job.type === 'tv' ? tmdbRuntime(item) : item.runtime,
+        minVoteCount: getMinVoteCount(job.type, job.era?.start)
       };
     }));
   });
   let candidates = pages.flat().filter(item => item.title && meetsTmdbQuality({
     vote_count: item.voteCount,
     vote_average: item.voteAverage
-  }, item.type) &&
+  }, item.type, item.minVoteCount) &&
     (!eras.length || eras.some(era => item.year >= era.start && item.year <= era.end)));
   if (maxDuration !== 9999) {
     const effectiveMax = effectiveMaxDuration(maxDuration);
@@ -213,5 +240,5 @@ async function tmdbFillCandidates(settings, genreNames, eras, needed, minDuratio
 
 module.exports = {
   fillGenres, fillEras, mapLimit, plexFillCandidates, sameTitle, shuffle, tmdbFillCandidates,
-  effectiveMaxDuration, meetsTmdbQuality
+  effectiveMaxDuration, getMinVoteCount, meetsTmdbQuality, qualifyPlexCandidates
 };

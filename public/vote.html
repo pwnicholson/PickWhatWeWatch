@@ -9,13 +9,36 @@
 <body>
   <main class="shell">
     <header class="topbar"><a class="brand" href="/">PICK <span>WHAT WE WATCH</span></a><nav class="nav"><a class="nav-action" href="/">Add To Shortlist</a><a href="/results">Results</a><a class="admin-link" href="/admin">Admin</a></nav></header>
-    <section class="intro"><div class="eyebrow">One ballot per name</div><h1>Cast your vote.</h1><p>Rank your top three (#1 = +3 pts, #2 = +2 pts, #3 = +1 pt), mark anything else you’re happy to watch, and veto any hard no (−5 pts).</p><span id="voter-label" class="muted"></span> <button class="text-button" id="change-voter">Change name</button></section>
+    <section class="intro"><div class="eyebrow">One ballot per name</div><h1 id="vote-heading">Cast your vote.</h1><p id="vote-instructions">Rank your top three (#1 = +3 pts, #2 = +2 pts, #3 = +1 pt), mark anything else you’re happy to watch, and veto any hard no (−5 pts).</p><span id="voter-label" class="muted"></span> <button class="text-button" id="change-voter">Change name</button></section>
     <section id="closed-notice" class="panel" hidden><h2>Voting is closed</h2><p>The group can review the results now.</p><a class="button" href="/results">View results</a></section>
-    <div id="ballot-list" class="ballot-list"></div>
-    <div id="empty-vote" class="empty" hidden>No titles are on the shortlist yet.</div>
-    <p id="vote-status" class="status" aria-live="polite"></p>
-    <button id="submit-vote" class="button">Save my ballot</button>
-    <a id="view-results" class="button secondary ballot-results-link" href="/results" hidden>View Results</a>
+    <section id="round1-view" class="round-one" hidden>
+      <section id="round1-draft-waiting" class="panel" hidden>
+        <h2>The host is currently curating the Round 1 movie pool. Check back in a moment!</h2>
+        <p class="muted">This page will update automatically when voting opens.</p>
+      </section>
+      <p id="round1-banner" class="badge accent">Round 1 · Build the list together</p>
+      <p id="round1-progress-count" class="muted"></p>
+      <article id="round1-card"></article>
+      <div id="round1-controls" class="round1-votes">
+        <button id="round1-no" class="button no-vote" type="button">No</button>
+        <button id="round1-yes" class="button yes-vote" type="button">Yes</button>
+      </div>
+      <p id="round1-vote-status" class="status" aria-live="polite"></p>
+      <button id="round1-back" class="button secondary" type="button">Undo / Back</button>
+      <section id="round1-waiting" class="panel" hidden>
+        <h2>Round 1 complete. Proceed to Round 2 when ready.</h2>
+        <p id="round1-ready-status" class="status" aria-live="polite">Waiting for the admin to start Round 2…</p>
+        <p id="round1-start-notice" class="status" aria-live="polite"></p>
+        <button id="start-round2" class="button" type="button">Start Round 2</button>
+      </section>
+    </section>
+    <section id="standard-ballot">
+      <div id="ballot-list" class="ballot-list"></div>
+      <div id="empty-vote" class="empty" hidden>No titles are on the shortlist yet.</div>
+      <p id="vote-status" class="status" aria-live="polite"></p>
+      <button id="submit-vote" class="button">Save my ballot</button>
+      <a id="view-results" class="button secondary ballot-results-link" href="/results" hidden>View Results</a>
+    </section>
     <footer>Movie and TV data provided by TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB.</footer>
   </main>
   <div id="detail-modal" class="modal-backdrop" aria-hidden="true"><section class="modal" role="dialog" aria-modal="true" aria-label="Title details"><button class="modal-close" aria-label="Close details">×</button><div class="modal-content"></div></section></div>

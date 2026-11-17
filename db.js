@@ -57,11 +57,17 @@ db.exec(`
     director TEXT, summary TEXT, content_rating TEXT,
     metacritic_score TEXT, imdb_rating TEXT, rt_score TEXT,
     imdb_id TEXT, imdb_top250_rank INTEGER, providers TEXT NOT NULL DEFAULT '[]',
+    runtime_mins INTEGER, tmdb_vote_average REAL, tmdb_vote_count INTEGER,
     UNIQUE(source, source_id)
   );
   CREATE TABLE IF NOT EXISTS ballots (
     voter TEXT PRIMARY KEY COLLATE NOCASE, ranks TEXT NOT NULL,
     approvals TEXT NOT NULL, vetoes TEXT NOT NULL, updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS round1_votes (
+    voter_name TEXT NOT NULL COLLATE NOCASE, item_id TEXT NOT NULL,
+    vote INTEGER NOT NULL CHECK (vote IN (0, 1)), updated_at TEXT NOT NULL,
+    UNIQUE (voter_name, item_id)
   );
 `);
 
@@ -90,7 +96,10 @@ addMissingColumns('shortlist', {
   rt_score: 'TEXT',
   imdb_id: 'TEXT',
   imdb_top250_rank: 'INTEGER',
-  providers: "TEXT NOT NULL DEFAULT '[]'"
+  providers: "TEXT NOT NULL DEFAULT '[]'",
+  runtime_mins: 'INTEGER',
+  tmdb_vote_average: 'REAL',
+  tmdb_vote_count: 'INTEGER'
 });
 
 module.exports = db;
