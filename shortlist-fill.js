@@ -33,7 +33,7 @@ function fillEras() {
   for (let start = 2020; start <= currentDecade; start += 10) {
     eras.push({ start, end: start + 9, label: `${start}–${start + 9} (${start}s)` });
   }
-  return eras.map(era => ({ ...era, id: `${era.start}:${era.end}` }));
+  return eras.map(era => ({ ...era, id: `${era.start}-${era.end}` }));
 }
 
 function getMinVoteCount(mediaType, startYear) {

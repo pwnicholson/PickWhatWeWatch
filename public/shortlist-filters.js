@@ -43,6 +43,20 @@
     ));
   }
 
+  function eraRange(value) {
+    if (value && typeof value === 'object') {
+      const start = Number(value.start);
+      const end = Number(value.end);
+      if (Number.isFinite(start) && Number.isFinite(end)) return [start, end];
+      return eraRange(value.id ?? value.label);
+    }
+    const text = String(value || '').trim();
+    const range = text.match(/^(\d{4})\s*[-:–]\s*(\d{4})$/);
+    if (range) return [Number(range[1]), Number(range[2])];
+    const decade = text.match(/^(\d{4})s?$/i);
+    return decade ? [Number(decade[1]), Number(decade[1]) + 9] : null;
+  }
+
   function matchesActiveFilters(item, settings) {
     const reasons = [];
     const type = item.type ?? item.media_type;
@@ -62,14 +76,11 @@
     }
 
     const selectedEras = list(settings.eras ?? settings.roundFillOptions?.eras);
-    const year = Number(item.year);
-    if (selectedEras.length && !selectedEras.some(era => {
-      const range = typeof era === 'object'
-        ? [Number(era.start), Number(era.end)]
-        : String(era).split(':').map(Number);
-      return range.length === 2 && Number.isFinite(year) &&
-        year >= range[0] && year <= range[1];
-    })) reasons.push('eras');
+    const year = parseInt(String(item.year || item.release_date || '').slice(0, 4), 10);
+    if (selectedEras.length && (!year || !selectedEras.some(era => {
+      const range = eraRange(era);
+      return range && year >= range[0] && year <= range[1];
+    }))) reasons.push('Era');
 
     const minDuration = Number(filterValue(settings, 'min_duration', 'minDuration', 0)) || 0;
     const rawMax = Number(filterValue(settings, 'max_duration', 'maxDuration', 9999));

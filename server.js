@@ -177,7 +177,15 @@ function parseFillOptions(body = {}) {
   if (!Array.isArray(requestedGenres) || requestedGenres.some(name => !Object.hasOwn(fillGenres, name)) ||
       !Array.isArray(requestedEraIds)) throw new Error('Invalid genre or era selection.');
   const availableEras = new Map(fillEras().map(era => [era.id, era]));
-  const eraIds = [...new Set(requestedEraIds.map(String))];
+  const eraIds = [...new Set(requestedEraIds.map(value => {
+    if (value && typeof value === 'object') {
+      if (value.start != null && value.end != null) return `${value.start}-${value.end}`;
+      value = value.id ?? value.label;
+    }
+    const text = String(value || '').replace(/^(\d{4}):(\d{4})$/, '$1-$2');
+    const decade = text.match(/^(\d{4})s?$/i);
+    return decade ? `${decade[1]}-${Number(decade[1]) + 9}` : text;
+  }))];
   if (eraIds.some(id => !availableEras.has(id))) throw new Error('Invalid era selection.');
   const minDuration = Number(body.minDuration ?? 0);
   const maxDuration = Number(body.maxDuration ?? 9999);

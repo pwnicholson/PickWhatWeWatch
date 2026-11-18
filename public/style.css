@@ -83,7 +83,7 @@ p { color: var(--muted); line-height: 1.6; }
 .round-admin .status { margin-bottom: 4px; }
 .round-progress-heading { margin-top: 10px; color: #e8eaf0; font-size: .88rem; font-weight: 750; }
 .admin-tabs { display: flex; gap: 8px; margin: 0; padding: 0 0 5px; border: 0; border-radius: 0; background: transparent; }
-.admin-tab { flex: 1; min-height: 38px; padding: 7px 14px; border: 1px solid transparent; border-radius: 10px 10px 0 0; background: transparent; color: var(--muted); font-weight: 800; }
+.admin-tab { flex: 1; min-width: 0; min-height: 38px; padding: 7px 14px; border: 1px solid transparent; border-radius: 10px 10px 0 0; background: transparent; color: var(--muted); font-weight: 800; }
 .admin-tab:hover { color: white; }
 .admin-tab.active { border-color: #65532f; background: #483c27; color: var(--accent); }
 .admin-tab-panel > .panel:first-child { margin-top: 0; }
@@ -97,6 +97,11 @@ p { color: var(--muted); line-height: 1.6; }
 .shortlist-manager > .section-head { align-items: center; margin: 0 0 12px; }
 .shortlist-manager > .section-head h2 { margin: 0; font-size: clamp(1.35rem, 4vw, 1.7rem); }
 .shortlist-manager > .section-head .badge { white-space: nowrap; }
+.shortlist-settings-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 0 18px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
+.shortlist-settings-bar .capacity-setting { margin: 0; padding: 4px 0 10px; }
+.shortlist-settings-bar .capacity-setting input { width: 86px; min-height: 40px; padding: 7px 9px; }
+.shortlist-settings-bar .guest-additions-setting { margin: 0; padding: 8px 0 12px; }
+.fill-actions .muted { flex: 1 1 300px; }
 .shortlist-actions { margin: 4px 0 14px; }
 .shortlist-actions .status { flex-basis: 100%; }
 .admin-shortlist-list { padding-right: 4px; }
@@ -265,7 +270,7 @@ footer { margin-top: 46px; color: var(--muted); font-size: .84rem; text-align: c
   .voting-bar-row .button { min-height: 36px; padding: 6px 8px; font-size: .72rem; }
   .settings-save-pill { min-height: 22px; padding: 3px 5px; font-size: .67rem; white-space: nowrap; }
   .admin-tabs { gap: 5px; padding-bottom: 4px; }
-  .admin-tab { min-height: 34px; padding: 6px 8px; font-size: .84rem; }
+  .admin-tab { min-height: 36px; padding: 5px 3px; font-size: .68rem; line-height: 1.15; white-space: normal; }
   .two-round-admin { margin-top: 10px; }
   .plex-sync-row .toolbar { width: 100%; }
   .plex-sync-row .button { flex: 1; }

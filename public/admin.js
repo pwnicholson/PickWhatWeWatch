@@ -33,7 +33,19 @@ function fillEras() {
   for (let start = 2020; start <= currentDecade; start += 10) {
     eras.push([start, start + 9, `${start}–${start + 9} (${start}s)`]);
   }
-  return eras.map(([start, end, label]) => ({ id: `${start}:${end}`, label }));
+  return eras.map(([start, end, label]) => ({ id: `${start}-${end}`, label }));
+}
+
+function normalizeEraId(value) {
+  if (value && typeof value === 'object') {
+    if (value.start != null && value.end != null) return `${value.start}-${value.end}`;
+    return normalizeEraId(value.id ?? value.label);
+  }
+  const text = String(value || '');
+  const range = text.match(/^(\d{4})[:-](\d{4})$/);
+  if (range) return `${range[1]}-${range[2]}`;
+  const decade = text.match(/^(\d{4})s?$/i);
+  return decade ? `${decade[1]}-${Number(decade[1]) + 9}` : text;
 }
 
 function showStatus(message, success = false) {
@@ -279,9 +291,9 @@ async function loadAdmin() {
     for (const input of document.querySelectorAll('#fill-genres input')) {
       input.checked = (fillOptions.genres || []).includes(input.value);
     }
-    for (const input of document.querySelectorAll('#fill-eras input')) {
-      input.checked = (fillOptions.eras || []).includes(input.value);
-    }
+    const savedEras = new Set((Array.isArray(fillOptions.eras) ? fillOptions.eras : [])
+      .map(normalizeEraId));
+    for (const input of document.querySelectorAll('#fill-eras input')) input.checked = savedEras.has(input.value);
     if (fillOptions.minDuration != null) document.getElementById('fill-min-duration').value = fillOptions.minDuration;
     if (fillOptions.maxDuration != null) document.getElementById('fill-max-duration').value = fillOptions.maxDuration;
     document.getElementById('seed-standard-shortlist').checked = fillOptions.seedShortlist !== false;
@@ -509,6 +521,7 @@ function renderRoundMode() {
   document.getElementById('finalists-setting').hidden = !isTwoRound;
   document.getElementById('seed-shortlist-setting').hidden = !isTwoRound;
   document.getElementById('populate-round1').hidden = !isDraft;
+  document.getElementById('populate-round1-list').hidden = !isDraft;
   document.getElementById('two-round-admin').hidden = !isTwoRound;
   document.getElementById('standard-admin-search').hidden = isTwoRound;
   document.getElementById('generate-round1').hidden = isRound1;
@@ -522,6 +535,7 @@ function renderRoundMode() {
       ? 'Review the draft pool, remove any titles you do not want, then re-fill or send it out for voting.'
       : 'This is the separate Two-Round pool. Generate a draft pool to begin a voting session.'
     : '';
+  renderFillHelperText();
   if (roundProgressTimer) clearInterval(roundProgressTimer);
   if (isRound1) {
     refreshRound1Progress();
@@ -550,9 +564,10 @@ function updateMediaTypeControls() {
 }
 
 function setActiveTab(tab) {
-  const activeTab = tab === 'sources' ? 'sources' : 'shortlist';
+  const activeTab = ['shortlist', 'filters', 'sources'].includes(tab) ? tab : 'shortlist';
   for (const [name, buttonId, panelId] of [
     ['shortlist', 'shortlist-tab-button', 'shortlist-tab'],
+    ['filters', 'filters-tab-button', 'filters-tab'],
     ['sources', 'sources-tab-button', 'sources-tab']
   ]) {
     const active = name === activeTab;
@@ -561,6 +576,25 @@ function setActiveTab(tab) {
     document.getElementById(panelId).hidden = !active;
   }
   sessionStorage.setItem('pickwhatwewatch-admin-tab', activeTab);
+}
+
+function switchAdminTab(tab) {
+  setActiveTab(tab);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+window.switchAdminTab = switchAdminTab;
+
+function renderFillHelperText() {
+  const helper = document.getElementById('fill-helper-text');
+  const prefix = roundMode.votingMode === 'two_round'
+    ? 'Auto-fill Round 1 list using content, duration, and other filters defined on '
+    : 'Auto-fill shortlist using content, duration, and other filters defined on ';
+  const link = document.createElement('a');
+  link.href = '#';
+  link.dataset.jumpTab = 'filters';
+  link.textContent = 'Filters tab';
+  helper.replaceChildren(document.createTextNode(prefix), link);
 }
 
 async function refreshSavedShortlists() {
@@ -785,6 +819,12 @@ document.getElementById('media-type-filter').addEventListener('change', updateMe
 document.querySelectorAll('[data-admin-tab]').forEach(button => {
   button.addEventListener('click', () => setActiveTab(button.dataset.adminTab));
 });
+document.addEventListener('click', event => {
+  const link = event.target.closest('a[data-jump-tab]');
+  if (!link) return;
+  event.preventDefault();
+  switchAdminTab(link.dataset.jumpTab);
+});
 
 async function saveVotingMode() {
   const finalistsCount = Number(document.getElementById('finalists-count').value);
@@ -966,10 +1006,13 @@ document.getElementById('generate-round1').addEventListener('click', async event
   }
 });
 
-document.getElementById('populate-round1').addEventListener('click', async event => {
-  const button = event.currentTarget;
+async function populateRound1FromShortlist() {
+  const buttons = [
+    document.getElementById('populate-round1'),
+    document.getElementById('populate-round1-list')
+  ];
   const status = document.getElementById('round1-admin-status');
-  button.disabled = true;
+  buttons.forEach(button => { button.disabled = true; });
   status.textContent = 'Populating Round 1 from the Standard shortlist…';
   status.className = 'status';
   try {
@@ -991,9 +1034,12 @@ document.getElementById('populate-round1').addEventListener('click', async event
     status.textContent = error.message;
     status.className = 'status error';
   } finally {
-    button.disabled = false;
+    buttons.forEach(button => { button.disabled = false; });
   }
-});
+}
+
+document.getElementById('populate-round1').addEventListener('click', populateRound1FromShortlist);
+document.getElementById('populate-round1-list').addEventListener('click', populateRound1FromShortlist);
 
 document.getElementById('refill-round1').addEventListener('click', async event => {
   const button = event.currentTarget;

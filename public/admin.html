@@ -27,6 +27,7 @@
       </section>
       <nav class="admin-tabs" role="tablist" aria-label="Admin sections">
         <button id="shortlist-tab-button" class="admin-tab active" type="button" role="tab" aria-controls="shortlist-tab" aria-selected="true" data-admin-tab="shortlist">Shortlist</button>
+        <button id="filters-tab-button" class="admin-tab" type="button" role="tab" aria-controls="filters-tab" aria-selected="false" data-admin-tab="filters">Session Rules &amp; Filters</button>
         <button id="sources-tab-button" class="admin-tab" type="button" role="tab" aria-controls="sources-tab" aria-selected="false" data-admin-tab="sources">Setup Sources</button>
       </nav>
     </div>
@@ -58,14 +59,10 @@
     </details>
 
     <div id="settings-form">
-      <section id="shortlist-tab" class="admin-tab-panel" role="tabpanel" aria-labelledby="shortlist-tab-button">
+      <section id="filters-tab" class="admin-tab-panel" role="tabpanel" aria-labelledby="filters-tab-button" hidden>
         <section class="panel rules-card">
           <div class="section-head"><h2>Session Rules &amp; Filters</h2></div>
           <div class="admin-grid session-rules">
-            <label class="field">Max Shortlist Size
-              <input id="shortlist-max-size" type="number" min="3" max="100" step="1" value="20" required>
-              <small>3–100 titles · Default: 20</small>
-            </label>
             <label class="field">Media Type Mode
               <select id="media-type-filter">
                 <option value="both">Movies and TV Shows</option>
@@ -74,10 +71,6 @@
               </select>
             </label>
           </div>
-          <label class="guest-additions-setting">
-            <input id="allow-guest-additions" type="checkbox" checked>
-            Allow guests to search and add titles to the shortlist
-          </label>
           <section class="rating-section">
             <h3>Content Rating Filters</h3>
             <p class="muted">These limits apply to both Plex and streaming search results.</p>
@@ -140,8 +133,20 @@
           </section>
         </section>
 
+      </section>
+      <section id="shortlist-tab" class="admin-tab-panel" role="tabpanel" aria-labelledby="shortlist-tab-button">
         <section class="panel shortlist-manager">
           <div class="section-head"><h2 id="list-manager-title">Active Shortlist</h2><span id="shortlist-count" class="badge accent"></span></div>
+          <div class="shortlist-settings-bar">
+            <label class="capacity-setting">Max Shortlist Size
+              <input id="shortlist-max-size" type="number" min="3" max="100" step="1" value="20" required>
+              <small>Applies to Standard Mode only (not Build-Together mode).</small>
+            </label>
+            <label class="guest-additions-setting">
+              <input id="allow-guest-additions" type="checkbox" checked>
+              Allow guests to search and add titles to the shortlist
+            </label>
+          </div>
           <section id="standard-admin-search" class="admin-inline-search">
             <form id="admin-search-form" class="toolbar">
               <label class="search-wrap"><span class="search-icon">⌕</span>
@@ -161,9 +166,12 @@
             <span id="plex-action-status" class="status" aria-live="polite"></span>
           </div>
           <div id="admin-shortlist" class="admin-shortlist-list"></div>
+          <div class="toolbar shortlist-actions">
+            <button id="populate-round1-list" class="button secondary" type="button" hidden>Populate Round 1 from Standard Shortlist</button>
+          </div>
           <div class="toolbar fill-actions">
             <button id="fill-shortlist" class="button" type="button">Auto-Fill Shortlist</button>
-            <span class="muted">Auto-fill shortlist/Round 1 list using content, duration, and other filters defined above</span>
+            <span id="fill-helper-text" class="muted"></span>
             <span id="fill-status" class="status" aria-live="polite"></span>
           </div>
         </section>
