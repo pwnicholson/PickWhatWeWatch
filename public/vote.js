@@ -12,6 +12,28 @@ function setRound1Poll(mode, callback, interval = 3000) {
   round1PollTimer = setInterval(callback, interval);
 }
 
+function descriptionControls(item) {
+  const description = String(item.summary || item.overview || '').trim();
+  if (!description) return [];
+
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'text-button description-toggle';
+  toggle.textContent = 'Show Description';
+  toggle.setAttribute('aria-expanded', 'false');
+  const paragraph = document.createElement('p');
+  paragraph.className = 'vote-description';
+  paragraph.textContent = description;
+  paragraph.hidden = true;
+  toggle.addEventListener('click', event => {
+    event.stopPropagation();
+    paragraph.hidden = !paragraph.hidden;
+    toggle.textContent = paragraph.hidden ? 'Show Description' : 'Hide Description';
+    toggle.setAttribute('aria-expanded', String(!paragraph.hidden));
+  });
+  return [toggle, paragraph];
+}
+
 function ballotRow(item) {
   const row = document.createElement('article');
   row.className = 'ballot-card';
@@ -67,6 +89,7 @@ function ballotRow(item) {
     line.textContent = `${item.type === 'tv' ? 'Created by' : 'Dir'}: ${item.director}`;
     content.append(line);
   }
+  content.append(...descriptionControls(item));
   const controls = document.createElement('div');
   controls.className = 'ballot-controls';
   const rankGroup = document.createElement('div');
@@ -311,10 +334,7 @@ function renderRound1() {
     line.textContent = text;
     copy.append(line);
   }
-  const summary = document.createElement('p');
-  summary.className = 'round1-summary';
-  summary.textContent = item.summary || 'No plot summary available.';
-  copy.append(summary);
+  copy.append(...descriptionControls(item));
   if (Object.hasOwn(round1.votes, item.id)) {
     const savedVote = document.createElement('span');
     savedVote.className = 'muted';

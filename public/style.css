@@ -181,7 +181,8 @@ p { color: var(--muted); line-height: 1.6; }
 .round1-card .poster { border-radius: 12px; }
 .round1-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; min-width: 0; }
 .round1-copy h2 { margin: 0; }
-.round1-summary { margin: 0; color: var(--muted); line-height: 1.55; }
+.description-toggle { width: fit-content; padding: 2px 0; }
+.vote-description { margin: 0; color: var(--muted); line-height: 1.55; }
 .round1-votes { display: flex; gap: 12px; margin-top: 12px; }
 .round1-votes .button { min-width: 120px; min-height: 56px; font-size: 1.15rem; }
 .round1-votes .no-vote { background: #49272c; color: #ffd2d0; }
