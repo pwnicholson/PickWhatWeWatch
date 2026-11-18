@@ -6,11 +6,16 @@ const plexUrl = document.getElementById('plex-url');
 const plexToken = document.getElementById('plex-token');
 const sectionIds = document.getElementById('plex-sections');
 const labelsInput = document.getElementById('plex-labels');
-let votingClosed = false;
 let shortlistMaxSize = 20;
 let shortlistCount = 0;
+let activeShortlistItems = [];
+let standardShortlistItems = [];
 let roundMode = { votingMode: 'standard', roundStage: 'round1', finalistsCount: 10, roundId: '' };
 let roundProgressTimer;
+let settingsSaveTimer;
+let settingsStatusTimer;
+let settingsSaveRevision = 0;
+let settingsSaveQueue = Promise.resolve();
 const fillGenreNames = [
   'Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary',
   'Drama', 'Family', 'Horror', 'Mystery', 'Romance', 'Sci-Fi / Fantasy'
@@ -33,7 +38,20 @@ function fillEras() {
 
 function showStatus(message, success = false) {
   settingsStatus.textContent = message;
-  settingsStatus.className = `status ${success ? 'success' : 'error'}`;
+  settingsStatus.className = `settings-save-pill ${success ? 'saved' : 'save-error'}`;
+  clearTimeout(settingsStatusTimer);
+  if (success) {
+    settingsStatusTimer = setTimeout(() => {
+      settingsStatus.textContent = '';
+      settingsStatus.className = 'settings-save-pill';
+    }, 1500);
+  }
+}
+
+function showSaving() {
+  clearTimeout(settingsStatusTimer);
+  settingsStatus.textContent = 'Saving…';
+  settingsStatus.className = 'settings-save-pill saving';
 }
 
 function collectSettings() {
@@ -52,8 +70,14 @@ function collectSettings() {
     includeUnratedMovies: document.getElementById('include-unrated-movies').checked,
     maxTvRating: document.getElementById('max-tv-rating').value,
     includeUnratedTv: document.getElementById('include-unrated-tv').checked,
+    allowGuestAdditions: document.getElementById('allow-guest-additions').checked,
+    mediaTypeFilter: document.getElementById('media-type-filter').value,
     shortlistMaxSize: maxSize,
-    providers: [...document.querySelectorAll('#provider-checks input:checked')].map(input => Number(input.value))
+    providers: [...document.querySelectorAll('#provider-checks input:checked')].map(input => Number(input.value)),
+    roundFillOptions: {
+      ...selectedFillOptions(),
+      seedShortlist: document.getElementById('seed-standard-shortlist').checked
+    }
   };
 }
 
@@ -70,13 +94,56 @@ function renderSourceStatuses(status) {
 }
 
 async function saveSettings(showMessage = true) {
-  const settings = collectSettings();
-  await API.request('/api/admin/settings', { method: 'POST', body: JSON.stringify(settings) });
-  shortlistMaxSize = settings.shortlistMaxSize;
-  renderShortlistCount();
-  await refreshPlexStats();
-  renderSourceStatuses(await API.request('/api/config/status'));
-  if (showMessage) showStatus('Settings saved.', true);
+  clearTimeout(settingsSaveTimer);
+  const revision = ++settingsSaveRevision;
+  if (showMessage) showSaving();
+  try {
+    const settings = collectSettings();
+    const request = settingsSaveQueue.catch(() => {}).then(() =>
+      API.request('/api/admin/settings', { method: 'POST', body: JSON.stringify(settings) })
+    );
+    settingsSaveQueue = request;
+    await request;
+    shortlistMaxSize = settings.shortlistMaxSize;
+    renderShortlistCount();
+    renderSourceStatuses(await API.request('/api/config/status'));
+    updateMediaTypeControls();
+    updateDynamicFilters();
+    updatePlexControls();
+    if (showMessage && revision === settingsSaveRevision) showStatus('Saved ✓', true);
+  } catch (error) {
+    if (showMessage && revision === settingsSaveRevision) showStatus(error.message);
+    throw error;
+  }
+}
+
+function updatePlexControls() {
+  const ready = Boolean(plexUrl.value.trim() && plexToken.value.trim() && selectedIds().length);
+  document.getElementById('sync-plex').disabled = !ready;
+  document.getElementById('load-labels').disabled = !selectedIds().length;
+}
+
+function queueSettingsSave(delay = 0, refreshList = false) {
+  clearTimeout(settingsSaveTimer);
+  settingsSaveTimer = setTimeout(async () => {
+    try {
+      await saveSettings();
+      if (refreshList) await refreshActiveList();
+    } catch (error) {
+      showStatus(error.message);
+    }
+  }, delay);
+}
+
+function isTextSetting(input) {
+  return ['plex-url', 'plex-token', 'plex-labels', 'tmdb-key', 'omdb-key'].includes(input.id);
+}
+
+function isSettingsControl(input) {
+  return input.matches('input, select') &&
+    input.type !== 'search' &&
+    !input.closest('#admin-search-form') &&
+    input.id !== 'plex-server';
 }
 
 function renderPlexStats(counts) {
@@ -113,6 +180,7 @@ function renderLibraries(libraries, selected = sectionIds.value.split(',').map(v
     return label;
   }));
   sectionIds.value = selectedIds().join(',');
+  updatePlexControls();
 }
 
 function renderLabels(labels, selected = labelsInput.value.split(',').map(value => value.trim()).filter(Boolean)) {
@@ -132,6 +200,7 @@ function renderLabels(labels, selected = labelsInput.value.split(',').map(value 
     return label;
   }));
   labelsInput.value = [...document.querySelectorAll('#label-checks input:checked')].map(input => input.value).join(',');
+  updatePlexControls();
 }
 
 async function loadServers(preferredUrl = '', selectFirst = false) {
@@ -147,6 +216,7 @@ async function loadServers(preferredUrl = '', selectFirst = false) {
     plexServer.value = chosen.url;
     plexUrl.value = chosen.url;
   }
+  updatePlexControls();
   return servers;
 }
 
@@ -158,6 +228,7 @@ async function loadLibraries(saveFirst = true) {
     if (saveFirst) await saveSettings(false);
     const { libraries } = await API.request('/api/plex/libraries');
     renderLibraries(libraries);
+    if (saveFirst) await saveSettings(false);
     status.textContent = `${libraries.length} Movie and TV Show libraries loaded.`;
     status.className = 'status success';
   } catch (error) {
@@ -183,8 +254,8 @@ async function initializePlex(plexSettings) {
 
 async function loadAdmin() {
   try {
-    const [settings, titles, sourceStatus] = await Promise.all([
-      API.request('/api/admin/settings'), API.request('/api/shortlist'), API.request('/api/config/status')
+    const [settings, sourceStatus] = await Promise.all([
+      API.request('/api/admin/settings'), API.request('/api/config/status')
     ]);
     renderSourceStatuses(sourceStatus);
     plexUrl.value = settings.plexUrl;
@@ -198,6 +269,9 @@ async function loadAdmin() {
     document.getElementById('include-unrated-movies').checked = settings.includeUnratedMovies;
     document.getElementById('max-tv-rating').value = settings.maxTvRating;
     document.getElementById('include-unrated-tv').checked = settings.includeUnratedTv;
+    document.getElementById('allow-guest-additions').checked = settings.allowGuestAdditions;
+    document.getElementById('media-type-filter').value = settings.mediaTypeFilter;
+    updateMediaTypeControls();
     document.getElementById('shortlist-max-size').value = settings.shortlistMaxSize;
     shortlistMaxSize = settings.shortlistMaxSize;
     renderFillFilters();
@@ -210,6 +284,7 @@ async function loadAdmin() {
     }
     if (fillOptions.minDuration != null) document.getElementById('fill-min-duration').value = fillOptions.minDuration;
     if (fillOptions.maxDuration != null) document.getElementById('fill-max-duration').value = fillOptions.maxDuration;
+    document.getElementById('seed-standard-shortlist').checked = fillOptions.seedShortlist !== false;
     const checks = document.getElementById('provider-checks');
     checks.replaceChildren(...settings.providerOptions.map(([name, id]) => {
       const label = document.createElement('label');
@@ -220,12 +295,16 @@ async function loadAdmin() {
       label.append(input, document.createTextNode(name));
       return label;
     }));
-    votingClosed = settings.votingClosed;
     roundMode = settings;
     renderVoting();
     renderRoundMode();
-    renderShortlist(titles);
+    await refreshActiveList();
+    const savedTab = sessionStorage.getItem('pickwhatwewatch-admin-tab');
+    const configured = Boolean(settings.plexToken || settings.tmdbKey);
+    setActiveTab(savedTab || (configured ? 'shortlist' : 'sources'));
+    await refreshSavedShortlists();
     await refreshPlexStats();
+    updatePlexControls();
     if (settings.plexToken) await initializePlex(settings);
   } catch (error) {
     showStatus(error.message);
@@ -234,14 +313,13 @@ async function loadAdmin() {
 }
 
 function renderVoting() {
-  document.getElementById('voting-state').textContent =
-    `${votingClosed ? 'Voting is closed.' : 'Voting is open.'} ${roundMode.votingMode === 'two_round' ? `Build the List Together · ${roundMode.roundStage === 'draft' ? 'Draft review' : roundMode.roundStage === 'round2' ? 'Round 2' : 'Round 1'}` : 'Standard Mode'}`;
-  document.getElementById('toggle-voting').textContent = votingClosed ? 'Reopen voting' : 'Close voting';
+  document.getElementById('voting-mode').value = roundMode.votingMode;
 }
 
 function renderShortlist(items) {
   const list = document.getElementById('admin-shortlist');
   list.replaceChildren();
+  activeShortlistItems = items;
   shortlistCount = items.length;
   renderShortlistCount();
   for (const item of items) {
@@ -270,13 +348,11 @@ function renderShortlist(items) {
     remove.type = 'button';
     remove.className = 'button danger';
     remove.textContent = 'Remove';
-    remove.hidden = roundMode.votingMode === 'two_round' &&
-      Boolean(roundMode.roundId) && roundMode.roundStage !== 'draft';
     remove.addEventListener('click', async () => {
       try {
-        await API.request(`/api/admin/shortlist/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
-        const updated = await API.request('/api/shortlist');
-        renderShortlist(updated);
+        const path = roundMode.votingMode === 'two_round' ? '/api/two-round-pool/' : '/api/shortlist/';
+        await API.request(`${path}${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+        await refreshActiveList();
       } catch (error) { showStatus(error.message); }
     });
     const copy = document.createElement('span');
@@ -285,12 +361,128 @@ function renderShortlist(items) {
     row.append(copy, remove);
     list.append(row);
   }
-  document.getElementById('clear-shortlist').disabled = !items.length ||
-    (roundMode.votingMode === 'two_round' && Boolean(roundMode.roundId) && roundMode.roundStage !== 'draft');
+  document.getElementById('clear-shortlist').disabled = !items.length;
+  document.getElementById('clear-shortlist').textContent = 'Clear All';
+  updateDynamicFilters();
 }
 
+async function refreshActiveList() {
+  const path = roundMode.votingMode === 'two_round' && roundMode.roundStage !== 'round2'
+    ? '/api/two-round-pool'
+    : '/api/admin/shortlist';
+  const [items, standard] = await Promise.all([
+    API.request(path),
+    API.request('/api/admin/shortlist?list=standard')
+  ]);
+  standardShortlistItems = standard;
+  renderShortlist(items);
+}
+
+function activeFilterSettings() {
+  return {
+    media_type_filter: document.getElementById('media-type-filter').value,
+    max_movie_rating: document.getElementById('max-movie-rating').value,
+    include_unrated_movies: document.getElementById('include-unrated-movies').checked,
+    max_tv_rating: document.getElementById('max-tv-rating').value,
+    include_unrated_tv: document.getElementById('include-unrated-tv').checked,
+    ...selectedFillOptions()
+  };
+}
+
+function updateDynamicFilters() {
+  const settings = activeFilterSettings();
+  [...document.getElementById('admin-shortlist').children].forEach((row, index) => {
+    const { allowed, reasons } = PickWhatWeWatchFilters.matchesActiveFilters(activeShortlistItems[index], settings);
+    row.classList.toggle('filtered-out', !allowed);
+    let badge = row.querySelector('.filter-reason-badge');
+    if (allowed) {
+      badge?.remove();
+      return;
+    }
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'badge hidden-type-badge filter-reason-badge';
+      row.querySelector('.admin-item-meta').append(badge);
+    }
+    badge.textContent = `Hidden by filters: ${reasons.join(', ')}`;
+  });
+
+  const eligibleCount = standardShortlistItems.filter(item =>
+    PickWhatWeWatchFilters.matchesActiveFilters(item, settings).allowed).length;
+  const finalists = Number(document.getElementById('finalists-count').value) || roundMode.finalistsCount || 10;
+  document.getElementById('round1-sampling-notice').hidden =
+    roundMode.votingMode !== 'two_round' || eligibleCount <= finalists * 6;
+}
+
+document.getElementById('admin-search-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const query = document.getElementById('admin-search-query').value.trim();
+  const status = document.getElementById('admin-search-status');
+  const results = document.getElementById('admin-search-results');
+  results.replaceChildren();
+  if (query.length < 2) {
+    status.textContent = 'Enter at least two characters to search.';
+    status.className = 'status';
+    return;
+  }
+  status.textContent = 'Searching Plex and TMDB…';
+  status.className = 'status';
+  try {
+    const items = await API.request(`/api/search?q=${encodeURIComponent(query)}`);
+    for (const item of items) {
+      const row = document.createElement('div');
+      row.className = 'admin-search-result';
+      row.append(posterNode(item.poster, item.title, 'admin-search-poster'));
+      const info = document.createElement('div');
+      info.className = 'admin-item-copy';
+      const title = document.createElement('strong');
+      title.textContent = `${item.title}${item.year ? ` (${item.year})` : ''}`;
+      const meta = document.createElement('span');
+      meta.className = 'muted';
+      meta.textContent = `${item.type === 'tv' ? 'TV Show' : 'Movie'}${item.year ? ` · ${item.year}` : ''}`;
+      const source = document.createElement('span');
+      source.className = 'badge ballot-source';
+      source.textContent = item.source === 'plex'
+        ? 'On Plex'
+        : (item.providers || []).map(provider => provider.provider_name || provider).join(', ') || 'TMDB';
+      info.append(title, meta, source);
+      const add = document.createElement('button');
+      add.className = 'button secondary';
+      add.type = 'button';
+      add.textContent = 'Add to Shortlist';
+      add.addEventListener('click', async () => {
+        add.disabled = true;
+        try {
+          await API.request('/api/shortlist', {
+            method: 'POST',
+            body: JSON.stringify({
+              source: item.source, sourceId: item.sourceId, title: item.title,
+              type: item.type, year: item.year, poster: item.poster
+            })
+          });
+          await refreshActiveList();
+          add.textContent = 'Added';
+        } catch (error) {
+          add.disabled = false;
+          add.textContent = error.message;
+        }
+      });
+      row.append(info, add);
+      results.append(row);
+    }
+    status.textContent = items.length ? `${items.length} titles found` : 'No matches found.';
+  } catch (error) {
+    status.textContent = error.message;
+    status.className = 'status error';
+  }
+});
+
 function renderShortlistCount() {
-  const activeRound = roundMode.votingMode === 'two_round' && roundMode.roundId;
+  const activeRound = roundMode.votingMode === 'two_round';
+  document.getElementById('list-manager-title').textContent =
+    activeRound
+      ? roundMode.roundStage === 'round2' ? 'Round 2 Finalists' : 'Round 1 Candidate Pool'
+      : 'Active Shortlist';
   const label = activeRound && roundMode.roundStage === 'draft'
     ? `Draft Pool: ${shortlistCount} / ${roundMode.finalistsCount * 6} items`
     : activeRound && roundMode.roundStage === 'round1'
@@ -299,25 +491,36 @@ function renderShortlistCount() {
       ? `${shortlistCount} finalists`
       : `${shortlistCount} / ${shortlistMaxSize} titles`;
   document.getElementById('shortlist-count').textContent = label;
-  document.getElementById('fill-shortlist').disabled =
-    shortlistCount >= shortlistMaxSize || roundMode.votingMode === 'two_round';
+  const fillTarget = roundMode.votingMode === 'two_round'
+    ? roundMode.finalistsCount * 6
+    : shortlistMaxSize;
+  document.getElementById('fill-shortlist').disabled = shortlistCount >= fillTarget ||
+    (roundMode.votingMode === 'two_round' && roundMode.roundStage !== 'draft');
+  updateDynamicFilters();
 }
 
 function renderRoundMode() {
   const isTwoRound = roundMode.votingMode === 'two_round';
-  const isDraft = isTwoRound && roundMode.roundStage === 'draft' && Boolean(roundMode.roundId);
+  const isDraft = isTwoRound && roundMode.roundStage === 'draft';
+  const canRefill = isDraft && Boolean(roundMode.roundId);
   const isRound1 = isTwoRound && roundMode.roundStage === 'round1' && Boolean(roundMode.roundId);
   document.getElementById('voting-mode').value = roundMode.votingMode;
   document.getElementById('finalists-count').value = roundMode.finalistsCount || 10;
   document.getElementById('finalists-setting').hidden = !isTwoRound;
+  document.getElementById('seed-shortlist-setting').hidden = !isTwoRound;
+  document.getElementById('populate-round1').hidden = !isDraft;
   document.getElementById('two-round-admin').hidden = !isTwoRound;
+  document.getElementById('standard-admin-search').hidden = isTwoRound;
   document.getElementById('generate-round1').hidden = isRound1;
-  document.getElementById('refill-round1').hidden = !isDraft;
-  document.getElementById('release-round1').hidden = !isDraft;
-  document.getElementById('round1-progress').hidden = !isRound1 && !(isTwoRound && roundMode.roundStage === 'round2');
+  document.getElementById('refill-round1').hidden = !canRefill;
+  document.getElementById('release-round1').hidden = !canRefill;
+  document.getElementById('round1-progress-heading').hidden = !isRound1;
+  document.getElementById('round1-progress').hidden = !isRound1;
   document.getElementById('start-round2').hidden = !isRound1;
   document.getElementById('round1-admin-status').textContent = isDraft
-    ? 'Review the draft pool, remove any titles you do not want, then re-fill or send it out for voting.'
+    ? roundMode.roundId
+      ? 'Review the draft pool, remove any titles you do not want, then re-fill or send it out for voting.'
+      : 'This is the separate Two-Round pool. Generate a draft pool to begin a voting session.'
     : '';
   if (roundProgressTimer) clearInterval(roundProgressTimer);
   if (isRound1) {
@@ -330,6 +533,120 @@ function renderRoundMode() {
     }
   }
   renderShortlistCount();
+}
+
+function updateMediaTypeControls() {
+  const filter = document.getElementById('media-type-filter').value;
+  const movieDisabled = filter === 'tv';
+  const tvDisabled = filter === 'movies';
+  for (const id of ['max-movie-rating', 'include-unrated-movies']) {
+    document.getElementById(id).disabled = movieDisabled;
+  }
+  for (const id of ['max-tv-rating', 'include-unrated-tv']) {
+    document.getElementById(id).disabled = tvDisabled;
+  }
+  document.getElementById('movie-rating-controls').classList.toggle('rating-disabled', movieDisabled);
+  document.getElementById('tv-rating-controls').classList.toggle('rating-disabled', tvDisabled);
+}
+
+function setActiveTab(tab) {
+  const activeTab = tab === 'sources' ? 'sources' : 'shortlist';
+  for (const [name, buttonId, panelId] of [
+    ['shortlist', 'shortlist-tab-button', 'shortlist-tab'],
+    ['sources', 'sources-tab-button', 'sources-tab']
+  ]) {
+    const active = name === activeTab;
+    document.getElementById(buttonId).classList.toggle('active', active);
+    document.getElementById(buttonId).setAttribute('aria-selected', String(active));
+    document.getElementById(panelId).hidden = !active;
+  }
+  sessionStorage.setItem('pickwhatwewatch-admin-tab', activeTab);
+}
+
+async function refreshSavedShortlists() {
+  const list = document.getElementById('saved-shortlists');
+  try {
+    const saved = await API.request('/api/saved-shortlists');
+    list.replaceChildren(...saved.map(shortlist => {
+      const row = document.createElement('div');
+      row.className = 'saved-shortlist-row';
+      const copy = document.createElement('div');
+      copy.className = 'saved-shortlist-copy';
+      const title = document.createElement('strong');
+      title.textContent = shortlist.name;
+      const count = document.createElement('span');
+      count.className = 'muted';
+      count.textContent = `${shortlist.itemCount} titles · saved ${new Date(shortlist.createdAt).toLocaleString()}`;
+      copy.append(title, count);
+      const actions = document.createElement('div');
+      actions.className = 'saved-shortlist-actions';
+      for (const [mode, label] of [['replace', 'Load (Replace)'], ['append', 'Append']]) {
+        const button = document.createElement('button');
+        button.className = 'button secondary';
+        button.type = 'button';
+        button.textContent = label;
+        button.dataset.loadSaved = '';
+        button.addEventListener('click', async () => {
+          if (mode === 'replace' &&
+              !window.confirm(`Replace the active ${roundMode.votingMode === 'two_round' ? 'Two-Round pool' : 'shortlist'}?`)) return;
+          try {
+            const result = await API.request(`/api/saved-shortlists/${encodeURIComponent(shortlist.id)}/load`, {
+              method: 'POST', body: JSON.stringify({ mode })
+            });
+            roundMode = { ...roundMode, ...result };
+            renderRoundMode();
+            await refreshActiveList();
+            document.getElementById('saved-shortlists-status').textContent =
+              `Loaded ${result.loadedCount} titles${result.skippedCount ? ` · skipped ${result.skippedCount}` : ''}.`;
+            document.getElementById('saved-shortlists-status').className = 'status success';
+          } catch (error) {
+            document.getElementById('saved-shortlists-status').textContent = error.message;
+            document.getElementById('saved-shortlists-status').className = 'status error';
+          }
+        });
+        actions.append(button);
+      }
+      const rename = document.createElement('button');
+      rename.className = 'button secondary';
+      rename.type = 'button';
+      rename.textContent = 'Rename';
+      rename.addEventListener('click', async () => {
+        const name = window.prompt('New shortlist name:', shortlist.name)?.trim();
+        if (!name) return;
+        try {
+          await API.request(`/api/saved-shortlists/${encodeURIComponent(shortlist.id)}`, {
+            method: 'PATCH', body: JSON.stringify({ name })
+          });
+          await refreshSavedShortlists();
+        } catch (error) {
+          document.getElementById('saved-shortlists-status').textContent = error.message;
+          document.getElementById('saved-shortlists-status').className = 'status error';
+        }
+      });
+      const remove = document.createElement('button');
+      remove.className = 'button danger';
+      remove.type = 'button';
+      remove.textContent = 'Delete';
+      remove.addEventListener('click', async () => {
+        if (!window.confirm(`Delete "${shortlist.name}"?`)) return;
+        try {
+          await API.request(`/api/saved-shortlists/${encodeURIComponent(shortlist.id)}`, { method: 'DELETE' });
+          await refreshSavedShortlists();
+        } catch (error) {
+          document.getElementById('saved-shortlists-status').textContent = error.message;
+          document.getElementById('saved-shortlists-status').className = 'status error';
+        }
+      });
+      actions.append(rename, remove);
+      row.append(copy, actions);
+      return row;
+    }));
+    document.getElementById('saved-shortlists-status').textContent = saved.length ? '' : 'No saved shortlists yet.';
+    document.getElementById('saved-shortlists-status').className = 'status';
+  } catch (error) {
+    document.getElementById('saved-shortlists-status').textContent = error.message;
+    document.getElementById('saved-shortlists-status').className = 'status error';
+  }
 }
 
 async function refreshRound1Progress() {
@@ -406,7 +723,11 @@ for (const [buttonId, containerId, checked] of [
   ['genres-select-all', 'fill-genres', true], ['genres-clear', 'fill-genres', false],
   ['eras-select-all', 'fill-eras', true], ['eras-clear', 'fill-eras', false]
 ]) {
-  document.getElementById(buttonId).addEventListener('click', () => setAllChecked(containerId, checked));
+  document.getElementById(buttonId).addEventListener('click', () => {
+    setAllChecked(containerId, checked);
+    updateDynamicFilters();
+    queueSettingsSave();
+  });
 }
 
 document.getElementById('fill-shortlist').addEventListener('click', async event => {
@@ -421,23 +742,74 @@ document.getElementById('fill-shortlist').addEventListener('click', async event 
       method: 'POST',
       body: JSON.stringify(selectedFillOptions())
     });
-    renderShortlist(await API.request('/api/shortlist'));
+    if (roundMode.votingMode === 'two_round') {
+      roundMode = {
+        ...roundMode,
+        ...await API.request('/api/admin/settings'),
+        roundPoolSize: result.newTotal
+      };
+      renderRoundMode();
+    }
+    await refreshActiveList();
     status.textContent = result.message || `Added ${result.addedCount} ${result.addedCount === 1 ? 'title' : 'titles'}.`;
     status.className = `status ${result.addedCount ? 'success' : ''}`;
   } catch (error) {
     status.textContent = error.message;
     status.className = 'status error';
   } finally {
-    button.disabled = shortlistCount >= shortlistMaxSize;
+    renderShortlistCount();
   }
 });
 
-settingsForm.addEventListener('submit', async event => {
-  event.preventDefault();
-  try {
-    await saveSettings();
-  } catch (error) { showStatus(error.message); }
+settingsForm.addEventListener('change', event => {
+  const input = event.target.closest('input, select');
+  if (!input || !isSettingsControl(input)) return;
+  if (input.id === 'media-type-filter') updateMediaTypeControls();
+  updateDynamicFilters();
+  updatePlexControls();
+  queueSettingsSave(0, input.id === 'media-type-filter');
 });
+
+settingsForm.addEventListener('input', event => {
+  const input = event.target.closest('input, select');
+  if (input) updateDynamicFilters();
+  if (input && isSettingsControl(input) && isTextSetting(input)) queueSettingsSave(600);
+});
+
+settingsForm.addEventListener('focusout', event => {
+  const input = event.target.closest('input, select');
+  if (input && isSettingsControl(input) && isTextSetting(input)) queueSettingsSave();
+});
+
+document.getElementById('media-type-filter').addEventListener('change', updateMediaTypeControls);
+document.querySelectorAll('[data-admin-tab]').forEach(button => {
+  button.addEventListener('click', () => setActiveTab(button.dataset.adminTab));
+});
+
+async function saveVotingMode() {
+  const finalistsCount = Number(document.getElementById('finalists-count').value);
+  if (!Number.isInteger(finalistsCount) || finalistsCount < 3 || finalistsCount > 25) {
+    showStatus('Number of finalists must be from 3 to 25.');
+    document.getElementById('finalists-count').value = roundMode.finalistsCount || 10;
+    return;
+  }
+  showSaving();
+  try {
+    roundMode = await API.request('/api/admin/voting-mode', {
+      method: 'POST',
+      body: JSON.stringify({ mode: document.getElementById('voting-mode').value, finalistsCount })
+    });
+    roundMode.roundPoolSize = roundMode.roundPoolSize || 0;
+    await refreshActiveList();
+    renderVoting();
+    renderRoundMode();
+    showStatus('Saved ✓', true);
+  } catch (error) {
+    document.getElementById('voting-mode').value = roundMode.votingMode;
+    document.getElementById('finalists-count').value = roundMode.finalistsCount || 10;
+    showStatus(error.message);
+  }
+}
 
 document.getElementById('connect-plex').addEventListener('click', async event => {
   const button = event.currentTarget;
@@ -488,7 +860,12 @@ plexServer.addEventListener('change', async () => {
   const url = plexServer.value;
   if (!url) return;
   plexUrl.value = url;
-  await loadLibraries(true);
+  try {
+    await saveSettings(false);
+    await loadLibraries(true);
+  } catch (error) {
+    showStatus(error.message);
+  }
 });
 
 document.getElementById('load-libraries').addEventListener('click', () => loadLibraries(true));
@@ -533,33 +910,25 @@ document.getElementById('sync-plex').addEventListener('click', async event => {
   }
 });
 
-document.getElementById('toggle-voting').addEventListener('click', async () => {
+document.getElementById('reset-votes').addEventListener('click', async event => {
+  if (!window.confirm('Reset all ranked-choice and Round 1 votes? This cannot be undone.')) return;
+  const button = event.currentTarget;
+  button.disabled = true;
   try {
-    const response = await API.request('/api/admin/voting', { method: 'POST', body: JSON.stringify({ closed: !votingClosed }) });
-    votingClosed = response.closed;
-    renderVoting();
-  } catch (error) { showStatus(error.message); }
-});
-
-document.getElementById('voting-mode').addEventListener('change', async event => {
-  try {
-    const finalistsCount = Number(document.getElementById('finalists-count').value);
-    if (!Number.isInteger(finalistsCount) || finalistsCount < 3 || finalistsCount > 25) {
-      throw new Error('Number of finalists must be from 3 to 25.');
-    }
-    roundMode = await API.request('/api/admin/voting-mode', {
-      method: 'POST',
-      body: JSON.stringify({ mode: event.currentTarget.value, finalistsCount })
-    });
-    roundMode.roundPoolSize = shortlistCount;
-    renderVoting();
-    renderRoundMode();
-    renderShortlistCount();
+    const result = await API.request('/api/admin/reset-votes', { method: 'POST', body: '{}' });
+    showStatus(`Reset ${result.ballots + result.round1Votes} votes.`, true);
+    if (roundMode.roundStage === 'round1') await refreshRound1Progress();
   } catch (error) {
     showStatus(error.message);
-    event.currentTarget.value = roundMode.votingMode;
+  } finally {
+    button.disabled = false;
   }
 });
+
+document.getElementById('voting-mode').addEventListener('change', saveVotingMode);
+document.getElementById('finalists-count').addEventListener('change', saveVotingMode);
+document.getElementById('finalists-count').addEventListener('input', updateDynamicFilters);
+document.getElementById('seed-standard-shortlist').addEventListener('change', () => queueSettingsSave());
 
 document.getElementById('generate-round1').addEventListener('click', async event => {
   const button = event.currentTarget;
@@ -577,13 +946,46 @@ document.getElementById('generate-round1').addEventListener('click', async event
     await saveSettings(false);
     const result = await API.request('/api/admin/round1/generate', {
       method: 'POST',
-      body: JSON.stringify({ finalistsCount, ...selectedFillOptions() })
+      body: JSON.stringify({
+        finalistsCount,
+        seedShortlist: document.getElementById('seed-standard-shortlist').checked,
+        ...selectedFillOptions()
+      })
     });
     roundMode = { ...roundMode, ...result, roundPoolSize: result.poolSize };
-    renderShortlist(await API.request('/api/shortlist'));
+    await refreshActiveList();
     renderVoting();
     renderRoundMode();
-    status.textContent = `Draft pool ready: ${result.poolSize} titles (${result.addedCount} added).`;
+    status.textContent = `Draft pool ready: ${result.poolSize} titles (${result.seededCount} copied, ${result.addedCount} added).`;
+    status.className = 'status success';
+  } catch (error) {
+    status.textContent = error.message;
+    status.className = 'status error';
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('populate-round1').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  const status = document.getElementById('round1-admin-status');
+  button.disabled = true;
+  status.textContent = 'Populating Round 1 from the Standard shortlist…';
+  status.className = 'status';
+  try {
+    await saveSettings(false);
+    const result = await API.request('/api/two-round/populate-from-shortlist', {
+      method: 'POST',
+      body: '{}'
+    });
+    roundMode = {
+      ...roundMode,
+      ...await API.request('/api/admin/settings'),
+      roundPoolSize: result.count
+    };
+    await refreshActiveList();
+    renderRoundMode();
+    status.textContent = `Populated Round 1 with ${result.count} eligible titles.`;
     status.className = 'status success';
   } catch (error) {
     status.textContent = error.message;
@@ -606,7 +1008,7 @@ document.getElementById('refill-round1').addEventListener('click', async event =
       body: JSON.stringify(selectedFillOptions())
     });
     roundMode.roundPoolSize = result.poolSize;
-    renderShortlist(await API.request('/api/shortlist'));
+    await refreshActiveList();
     status.textContent = `Draft pool: ${result.poolSize} / ${result.targetSize} items (${result.addedCount} added).`;
     status.className = result.addedCount ? 'status success' : 'status';
   } catch (error) {
@@ -624,7 +1026,7 @@ document.getElementById('release-round1').addEventListener('click', async event 
   try {
     const result = await API.request('/api/admin/round1/release', { method: 'POST', body: '{}' });
     roundMode = { ...roundMode, ...result, roundPoolSize: result.poolSize };
-    renderShortlist(await API.request('/api/shortlist'));
+    await refreshActiveList();
     renderVoting();
     renderRoundMode();
     status.textContent = `Round 1 is open to guests with ${result.poolSize} titles.`;
@@ -643,7 +1045,7 @@ document.getElementById('start-round2').addEventListener('click', async event =>
   try {
     const result = await API.request('/api/admin/round2/start', { method: 'POST', body: '{}' });
     roundMode.roundStage = result.roundStage;
-    renderShortlist(await API.request('/api/shortlist'));
+    await refreshActiveList();
     renderVoting();
     renderRoundMode();
     document.getElementById('round1-admin-status').textContent =
@@ -658,15 +1060,72 @@ document.getElementById('start-round2').addEventListener('click', async event =>
 });
 
 document.getElementById('clear-shortlist').addEventListener('click', async () => {
-  if (!window.confirm('Clear every title and ballot? This cannot be undone.')) return;
+  if (!window.confirm('Clear the active list and its ballots? This cannot be undone.')) return;
   try {
-    await API.request('/api/admin/shortlist', { method: 'DELETE' });
-    roundMode.roundId = '';
-    roundMode.roundStage = roundMode.votingMode === 'two_round' ? 'draft' : 'round1';
-    renderShortlist([]);
+    const path = roundMode.votingMode === 'two_round' ? '/api/two-round-pool' : '/api/shortlist';
+    await API.request(path, { method: 'DELETE' });
+    if (roundMode.votingMode === 'two_round') {
+      roundMode.roundId = '';
+      roundMode.roundStage = 'draft';
+    }
+    await refreshActiveList();
     renderRoundMode();
   } catch (error) { showStatus(error.message); }
 });
+
+document.getElementById('save-current-list').addEventListener('click', async () => {
+  const name = window.prompt('Name this shortlist:')?.trim();
+  if (!name) return;
+  const status = document.getElementById('saved-shortlists-status');
+  try {
+    const saved = await API.request('/api/saved-shortlists', {
+      method: 'POST', body: JSON.stringify({ name })
+    });
+    await refreshSavedShortlists();
+    status.textContent = `Saved "${saved.name}" (${saved.itemCount} titles).`;
+    status.className = 'status success';
+  } catch (error) {
+    status.textContent = error.message;
+    status.className = 'status error';
+  }
+});
+
+document.getElementById('push-plex-watchlist').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  const status = document.getElementById('plex-action-status');
+  button.disabled = true;
+  status.textContent = 'Adding titles to Plex Watchlist…';
+  try {
+    const result = await API.request('/api/plex/watchlist/push', { method: 'POST', body: '{}' });
+    const failed = result.failedTitles || [];
+    status.textContent = `Added ${result.addedCount}; failed ${failed.length}${failed.length ? ` · ${failed.map(item => item.title).join(', ')}` : ''}.`;
+    status.className = `status${failed.length ? ' error' : ' success'}`;
+  } catch (error) {
+    status.textContent = error.message;
+    status.className = 'status error';
+  } finally { button.disabled = false; }
+});
+
+document.getElementById('save-plex-playlist').addEventListener('click', async event => {
+  const name = window.prompt('Plex playlist name:', `Movie Night - ${new Date().toISOString().slice(0, 10)}`)?.trim();
+  if (!name) return;
+  const button = event.currentTarget;
+  const status = document.getElementById('plex-action-status');
+  button.disabled = true;
+  try {
+    const result = await API.request('/api/plex/playlist', {
+      method: 'POST', body: JSON.stringify({ name })
+    });
+    status.textContent = `Playlist saved: ${result.addedCount} local Plex titles added; ${result.skippedStreamingCount} streaming-only titles skipped.`;
+    status.className = 'status success';
+  } catch (error) {
+    status.textContent = error.message;
+    status.className = 'status error';
+  } finally { button.disabled = false; }
+});
+
+window.addEventListener('shortlist-updated', () =>
+  refreshActiveList().catch(error => showStatus(error.message)));
 
 document.getElementById('logout').addEventListener('click', async () => {
   try { await API.request('/api/admin/logout', { method: 'POST', body: '{}' }); location.href = '/admin'; }

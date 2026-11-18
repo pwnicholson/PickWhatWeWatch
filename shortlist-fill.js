@@ -131,7 +131,7 @@ function tmdbDiscoverFilters(type, genreIds, era, settings, page, minDuration, m
     include_adult: 'false',
     watch_region: 'US',
     with_watch_providers: settings.providers.join('|'),
-    with_watch_monetization_types: 'flatrate|free|ads',
+    with_watch_monetization_types: 'flatrate|free',
     with_genres: genreIds.join('|'),
     'vote_average.gte': '8.0',
     'vote_count.gte': String(getMinVoteCount(type, era?.start)),

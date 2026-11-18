@@ -2,38 +2,54 @@ const searchInput = document.getElementById('search');
 const searchResults = document.getElementById('search-results');
 const searchStatus = document.getElementById('search-status');
 let searchTimer;
+let allowGuestAdditions = true;
 
 function searchCard(item) {
-  return titleCard(item, () => openTitle(item, true));
+  return titleCard(item, () => openTitle(item, allowGuestAdditions));
 }
 
 async function loadSourceStatus() {
   const banner = document.getElementById('source-setup-banner');
   try {
     const status = await API.request('/api/config/status');
+    allowGuestAdditions = status.allowGuestAdditions !== false;
     banner.hidden = status.plexConfigured || status.tmdbConfigured || status.omdbConfigured;
+    document.getElementById('guest-additions-banner').hidden = allowGuestAdditions;
+    document.getElementById('open-public-import-list').hidden = !allowGuestAdditions;
   } catch (error) {
     banner.hidden = false;
+    document.getElementById('open-public-import-list').hidden = true;
     banner.querySelector('span').textContent = `Unable to check media-source setup: ${error.message}`;
   }
 }
 
 async function loadShortlist() {
   try {
-    const [items, status] = await Promise.all([API.request('/api/shortlist'), API.request('/api/status')]);
+    const [items, status, config] = await Promise.all([
+      API.request('/api/shortlist'), API.request('/api/status'), API.request('/api/config/status')
+    ]);
+    allowGuestAdditions = config.allowGuestAdditions !== false;
+    document.getElementById('guest-additions-banner').hidden = allowGuestAdditions;
+    document.getElementById('open-public-import-list').hidden = !allowGuestAdditions;
     const list = document.getElementById('shortlist');
     list.replaceChildren(...items.map(item => titleCard(item, () => openTitle(item, false))));
     document.getElementById('empty-shortlist').hidden = items.length > 0;
-    const full = items.length >= status.shortlistMaxSize;
-    document.getElementById('shortlist-count').textContent = `${items.length} / ${status.shortlistMaxSize} titles`;
-    searchInput.disabled = full;
-    searchInput.classList.toggle('is-full', full);
+    const maxSize = status.activeListMaxSize || status.shortlistMaxSize;
+    const storedCount = status.shortlistCount;
+    const full = storedCount >= maxSize;
+    const hostManaged = status.votingMode === 'two_round' && Boolean(status.roundId);
+    document.getElementById('shortlist-count').textContent =
+      `${storedCount} / ${maxSize} ${status.votingMode === 'two_round' ? 'candidate titles' : 'titles'}`;
+    searchInput.disabled = full || hostManaged;
+    searchInput.classList.toggle('is-full', full || hostManaged);
     document.getElementById('shortlist-full-note').hidden = !full;
+    document.getElementById('home-status').textContent = hostManaged
+      ? 'The host is managing the Two-Round candidate pool.'
+      : '';
     if (full) {
       searchResults.replaceChildren();
       searchStatus.textContent = '';
     }
-    document.getElementById('home-status').textContent = status.votingClosed ? 'Voting is closed.' : '';
   } catch (error) {
     document.getElementById('home-status').textContent = error.message;
     document.getElementById('home-status').className = 'status error';

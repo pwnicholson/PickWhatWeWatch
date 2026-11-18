@@ -1,9 +1,16 @@
 const ballotList = document.getElementById('ballot-list');
 const voteStatus = document.getElementById('vote-status');
 let currentBallot = { ranks: [], approvals: [], vetoes: [] };
-let votingClosed = false;
 let round1 = null;
 let round1PollTimer;
+let round1PollMode = '';
+
+function setRound1Poll(mode, callback, interval = 3000) {
+  if (round1PollTimer && round1PollMode === mode) return;
+  if (round1PollTimer) clearInterval(round1PollTimer);
+  round1PollMode = mode;
+  round1PollTimer = setInterval(callback, interval);
+}
 
 function ballotRow(item) {
   const row = document.createElement('article');
@@ -80,7 +87,6 @@ function ballotRow(item) {
     button.dataset.value = value;
     button.setAttribute('aria-label', `Rank ${item.title} as choice #${value}`);
     button.setAttribute('aria-pressed', String(rankIndex === Number(value) - 1));
-    button.disabled = votingClosed;
     rankButtons.push(button);
     rankGroup.append(button);
   }
@@ -92,7 +98,7 @@ function ballotRow(item) {
   approval.type = 'checkbox';
   approval.dataset.approval = item.id;
   approval.checked = currentBallot.approvals.includes(item.id) || rankIndex >= 0;
-  approval.disabled = votingClosed || rankIndex >= 0;
+  approval.disabled = rankIndex >= 0;
   approvalLabel.append(approval, document.createTextNode('Willing to watch'));
 
   const vetoLabel = document.createElement('label');
@@ -101,7 +107,6 @@ function ballotRow(item) {
   veto.type = 'checkbox';
   veto.dataset.veto = item.id;
   veto.checked = currentBallot.vetoes.includes(item.id);
-  veto.disabled = votingClosed;
   vetoLabel.append(veto, document.createTextNode('Veto'));
   controls.append(rankGroup, approvalLabel, vetoLabel);
   content.append(controls);
@@ -111,7 +116,7 @@ function ballotRow(item) {
     const hasRank = card.querySelector('[data-rank][aria-pressed="true"]');
     const checkbox = card.querySelector('[data-approval]');
     if (hasRank) checkbox.checked = true;
-    checkbox.disabled = votingClosed || Boolean(hasRank);
+    checkbox.disabled = Boolean(hasRank);
   };
   for (const button of rankButtons) {
     button.addEventListener('click', () => {
@@ -134,20 +139,19 @@ function ballotRow(item) {
 
 async function initializeBallot() {
   if (round1PollTimer) clearInterval(round1PollTimer);
+  round1PollTimer = null;
+  round1PollMode = '';
   const voter = requireName();
   document.getElementById('voter-label').textContent = voter ? `Voting as ${voter}` : 'Your name is saved only in this browser.';
   try {
     const status = await API.request('/api/session/status');
-    votingClosed = status.votingClosed;
-    document.getElementById('closed-notice').hidden = !votingClosed;
     if (status.votingMode === 'two_round' && status.roundStage === 'draft') {
-      document.getElementById('closed-notice').hidden = true;
       document.getElementById('vote-heading').textContent = 'Build the list together.';
       document.getElementById('vote-instructions').textContent = '';
       document.getElementById('standard-ballot').hidden = true;
       document.getElementById('round1-view').hidden = false;
       setDraftWaiting(true);
-      round1PollTimer = setInterval(pollDraftStatus, 4000);
+      setRound1Poll('draft', pollDraftStatus, 4000);
       return;
     }
 
@@ -155,9 +159,9 @@ async function initializeBallot() {
       document.getElementById('vote-heading').textContent = 'Build the list together.';
       document.getElementById('vote-instructions').textContent = 'For each title, choose Yes if you would include it in the shortlist, or No if not.';
       document.getElementById('standard-ballot').hidden = true;
-      document.getElementById('round1-view').hidden = votingClosed;
+      document.getElementById('round1-view').hidden = false;
       setDraftWaiting(false);
-      if (!votingClosed) await initializeRound1(voter);
+      await initializeRound1(voter);
       return;
     }
 
@@ -171,7 +175,7 @@ async function initializeBallot() {
       API.request(`/api/ballot?voter=${encodeURIComponent(voter)}`)
     ]);
     currentBallot = ballot;
-    document.getElementById('submit-vote').hidden = votingClosed;
+    document.getElementById('submit-vote').hidden = false;
     document.getElementById('empty-vote').hidden = titles.length !== 0;
     ballotList.replaceChildren(...titles.map(ballotRow));
   } catch (error) {
@@ -252,12 +256,11 @@ function renderRound1() {
     ? `Card ${round1.order.length} of ${round1.order.length}`
     : `Card ${round1.index + 1} of ${round1.order.length}`;
   if (complete) {
-    if (round1PollTimer) clearInterval(round1PollTimer);
-    round1PollTimer = setInterval(pollRound2Status, 3000);
+    setRound1Poll('round2', pollRound2Status);
     pollRound2Status();
     return;
   }
-  if (round1PollTimer) clearInterval(round1PollTimer);
+  setRound1Poll('active', pollActiveRound1Status);
   const item = itemById.get(round1.order[round1.index]);
   if (!item) {
     round1.index++;
@@ -331,7 +334,7 @@ async function saveRound1Vote(vote) {
   try {
     await API.request('/api/round1/vote', {
       method: 'POST',
-      body: JSON.stringify({ voter: round1.voter, itemId, vote })
+      body: JSON.stringify({ voter: round1.voter, itemId, vote, roundId: round1.roundId })
     });
     round1.votes[itemId] = vote;
     round1.index++;
@@ -357,6 +360,10 @@ async function pollRound2Status() {
     const status = await API.request('/api/session/status');
     const banner = document.getElementById('round1-ready-status');
     const button = document.getElementById('start-round2');
+    if (status.votingMode === 'two_round' && status.roundStage === 'round1' &&
+        status.roundId !== round1.roundId) {
+      return initializeRound1(round1.voter);
+    }
     if (status.votingMode === 'two_round' && status.roundStage === 'round2') {
       banner.textContent = 'Round 2 is ready!';
       banner.className = 'status success';
@@ -371,6 +378,20 @@ async function pollRound2Status() {
     const banner = document.getElementById('round1-ready-status');
     banner.textContent = error.message;
     banner.className = 'status error';
+  }
+}
+
+async function pollActiveRound1Status() {
+  if (!round1 || round1.busy) return;
+  try {
+    const status = await API.request('/api/session/status');
+    if (status.votingMode !== 'two_round' || status.roundStage !== 'round1') {
+      return initializeBallot();
+    }
+    if (status.roundId !== round1.roundId) await initializeRound1(round1.voter);
+  } catch (error) {
+    document.getElementById('round1-vote-status').textContent = error.message;
+    document.getElementById('round1-vote-status').className = 'status error';
   }
 }
 

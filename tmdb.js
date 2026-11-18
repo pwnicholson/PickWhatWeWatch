@@ -1,6 +1,25 @@
 const providerCache = new Map();
 const certificationCache = new Map();
 const CACHE_MS = 15 * 60 * 1000;
+const providerOptions = [
+  ['Netflix', 8], ['Disney+', 337], ['Hulu', 15], ['Max', 1899],
+  ['Prime Video', 9], ['Apple TV+', 350], ['Peacock', 386], ['Paramount+', 531],
+  ['Kanopy', 191], ['Hoopla', 212], ['The Criterion Channel', 258],
+  ['BritBox', 151], ['Acorn TV', 87], ['PBS', 209], ['PBS Masterpiece', 294]
+];
+const providerNames = new Map(providerOptions.map(([name, id]) => [
+  id, id === 258 ? 'Criterion Channel' : name
+]));
+
+function matchingProviders(offers, config) {
+  const active = new Set(config.providers);
+  return [...new Map([...(offers?.flatrate || []), ...(offers?.free || []), ...(offers?.ads || [])]
+    .filter(provider => active.has(Number(provider.provider_id)))
+    .map(provider => {
+      const name = providerNames.get(Number(provider.provider_id)) || provider.provider_name;
+      return [provider.provider_id, { ...provider, provider_name: name }];
+    })).values()];
+}
 
 async function tmdb(path, key) {
   const url = new URL(`https://api.themoviedb.org/3${path}`);
@@ -88,12 +107,45 @@ async function search(query, config) {
   const results = await Promise.all(selected.map(async item => {
     const type = item.media_type;
     const offers = await providers(type, item.id, config.tmdbKey);
-    const matching = [...(offers?.flatrate || []), ...(offers?.free || []), ...(offers?.ads || [])]
-      .filter(provider => active.includes(Number(provider.provider_id)));
+    const matching = matchingProviders(offers, config);
     if (!matching.length) return null;
     return { ...compact(item), providers: [...new Map(matching.map(p => [p.provider_id, p])).values()] };
   }));
   return results.filter(Boolean);
+}
+
+async function findAvailable(query, type, year, config) {
+  if (!config.tmdbKey || !config.providers.length) return null;
+  const mediaTypes = type ? [type] : ['movie', 'tv'];
+  const searches = await Promise.all(mediaTypes.map(async mediaType => {
+    const result = await tmdb(`/search/${mediaType}?query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=1`, config.tmdbKey);
+    return (result.results || []).map(item => {
+      const compactItem = compact({ ...item, media_type: mediaType });
+      return { item, mediaType, compactItem };
+    });
+  }));
+  const queryTitle = normalizeTitle(query);
+  const targetYear = Number(year) || null;
+  const candidates = searches.flat().filter(candidate =>
+    normalizeTitle(candidate.compactItem.title) === queryTitle &&
+    (!targetYear || !candidate.compactItem.year || Math.abs(targetYear - candidate.compactItem.year) <= 1)
+  ).sort((a, b) => {
+    const distance = candidate => targetYear && candidate.compactItem.year
+      ? Math.abs(targetYear - candidate.compactItem.year)
+      : Number.MAX_SAFE_INTEGER;
+    return distance(a) - distance(b);
+  });
+  for (const candidate of candidates) {
+    const offers = await providers(candidate.mediaType, candidate.item.id, config.tmdbKey);
+    const matching = matchingProviders(offers, config);
+    if (matching.length) {
+      return {
+        ...candidate.compactItem,
+        providers: [...new Map(matching.map(provider => [provider.provider_id, provider])).values()]
+      };
+    }
+  }
+  return null;
 }
 
 async function details(type, id, config) {
@@ -111,8 +163,6 @@ async function details(type, id, config) {
     const us = ratingData?.results?.find(region => region.iso_3166_1 === 'US');
     rating = us?.rating || '';
   }
-  const offers = [...(offerData?.flatrate || []), ...(offerData?.free || []), ...(offerData?.ads || [])];
-  const active = new Set(config.providers);
   return {
     ...compact({ ...item, media_type: mediaType }),
     ...creditMetadata(item, mediaType),
@@ -123,8 +173,7 @@ async function details(type, id, config) {
       : Number(item.episode_run_time?.[0] || item.last_episode_to_air?.runtime) || null,
     tmdbVoteAverage: Number(item.vote_average) || null,
     tmdbVoteCount: Number(item.vote_count) || null,
-    providers: [...new Map(offers.filter(provider => active.has(Number(provider.provider_id)))
-      .map(provider => [provider.provider_id, provider])).values()]
+    providers: matchingProviders(offerData, config)
   };
 }
 
@@ -148,4 +197,4 @@ async function findDetails(title, type, year, config) {
   return match ? details(mediaType, match.item.id, config) : null;
 }
 
-module.exports = { search, details, findDetails, certification, discover, tvRuntime, tmdb };
+module.exports = { providerOptions, search, findAvailable, details, findDetails, certification, discover, tvRuntime, tmdb };

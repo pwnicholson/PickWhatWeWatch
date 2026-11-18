@@ -42,6 +42,11 @@ for (const filePath of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`, `${dbPath}-jou
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+const hasSettingsTable = Boolean(db.prepare(
+  "SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'"
+).get());
+const twoRoundPoolMigrated = hasSettingsTable &&
+  db.prepare("SELECT value FROM settings WHERE key='two_round_pool_migrated'").get()?.value === 'true';
 db.exec(`
   CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS plex_titles (
@@ -59,6 +64,30 @@ db.exec(`
     imdb_id TEXT, imdb_top250_rank INTEGER, providers TEXT NOT NULL DEFAULT '[]',
     runtime_mins INTEGER, tmdb_vote_average REAL, tmdb_vote_count INTEGER,
     UNIQUE(source, source_id)
+  );
+  CREATE TABLE IF NOT EXISTS two_round_pool (
+    id TEXT PRIMARY KEY, source TEXT NOT NULL, source_id TEXT NOT NULL,
+    title TEXT NOT NULL, type TEXT NOT NULL, year INTEGER, poster TEXT,
+    genres TEXT NOT NULL DEFAULT '[]', cast_top2 TEXT NOT NULL DEFAULT '[]',
+    director TEXT, summary TEXT, content_rating TEXT,
+    metacritic_score TEXT, imdb_rating TEXT, rt_score TEXT,
+    imdb_id TEXT, imdb_top250_rank INTEGER, providers TEXT NOT NULL DEFAULT '[]',
+    runtime_mins INTEGER, tmdb_vote_average REAL, tmdb_vote_count INTEGER,
+    is_finalist INTEGER NOT NULL DEFAULT 0 CHECK (is_finalist IN (0, 1)),
+    UNIQUE(source, source_id)
+  );
+  CREATE TABLE IF NOT EXISTS saved_shortlists (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS saved_shortlist_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    saved_shortlist_id TEXT NOT NULL REFERENCES saved_shortlists(id) ON DELETE CASCADE,
+    source TEXT NOT NULL, source_id TEXT NOT NULL, title TEXT NOT NULL, type TEXT NOT NULL,
+    year INTEGER, poster TEXT, genres TEXT NOT NULL DEFAULT '[]', cast_top2 TEXT NOT NULL DEFAULT '[]',
+    director TEXT, summary TEXT, content_rating TEXT, metacritic_score TEXT, imdb_rating TEXT,
+    rt_score TEXT, imdb_id TEXT, imdb_top250_rank INTEGER, providers TEXT NOT NULL DEFAULT '[]',
+    runtime_mins INTEGER, tmdb_vote_average REAL, tmdb_vote_count INTEGER,
+    UNIQUE(saved_shortlist_id, source, source_id)
   );
   CREATE TABLE IF NOT EXISTS ballots (
     voter TEXT PRIMARY KEY COLLATE NOCASE, ranks TEXT NOT NULL,
@@ -101,5 +130,60 @@ addMissingColumns('shortlist', {
   tmdb_vote_average: 'REAL',
   tmdb_vote_count: 'INTEGER'
 });
+addMissingColumns('two_round_pool', {
+  genres: "TEXT NOT NULL DEFAULT '[]'",
+  cast_top2: "TEXT NOT NULL DEFAULT '[]'",
+  director: 'TEXT',
+  summary: 'TEXT',
+  content_rating: 'TEXT',
+  metacritic_score: 'TEXT',
+  imdb_rating: 'TEXT',
+  rt_score: 'TEXT',
+  imdb_id: 'TEXT',
+  imdb_top250_rank: 'INTEGER',
+  providers: "TEXT NOT NULL DEFAULT '[]'",
+  runtime_mins: 'INTEGER',
+  tmdb_vote_average: 'REAL',
+  tmdb_vote_count: 'INTEGER',
+  is_finalist: 'INTEGER NOT NULL DEFAULT 0'
+});
+
+if (!twoRoundPoolMigrated) {
+  db.transaction(() => {
+    const mode = db.prepare("SELECT value FROM settings WHERE key='voting_mode'").get()?.value;
+    const stage = db.prepare("SELECT value FROM settings WHERE key='round_stage'").get()?.value;
+    const shortlistLimit = Number(db.prepare(
+      "SELECT value FROM settings WHERE key='shortlist_max_size'"
+    ).get()?.value) || 20;
+    const copyToPool = db.prepare(`INSERT OR IGNORE INTO two_round_pool
+      (id,source,source_id,title,type,year,poster,genres,cast_top2,director,summary,content_rating,
+        metacritic_score,imdb_rating,rt_score,imdb_id,imdb_top250_rank,providers,runtime_mins,
+        tmdb_vote_average,tmdb_vote_count,is_finalist)
+      SELECT id,source,source_id,title,type,year,poster,genres,cast_top2,director,summary,content_rating,
+        metacritic_score,imdb_rating,rt_score,imdb_id,imdb_top250_rank,providers,runtime_mins,
+        tmdb_vote_average,tmdb_vote_count,?
+      FROM shortlist`);
+    if (mode === 'two_round') {
+      copyToPool.run(stage === 'round2' ? 1 : 0);
+      db.prepare('DELETE FROM shortlist').run();
+    } else {
+      const count = db.prepare('SELECT count(*) AS count FROM shortlist').get().count;
+      if (count > shortlistLimit) {
+        db.prepare(`INSERT OR IGNORE INTO two_round_pool
+          (id,source,source_id,title,type,year,poster,genres,cast_top2,director,summary,content_rating,
+            metacritic_score,imdb_rating,rt_score,imdb_id,imdb_top250_rank,providers,runtime_mins,
+            tmdb_vote_average,tmdb_vote_count,is_finalist)
+          SELECT id,source,source_id,title,type,year,poster,genres,cast_top2,director,summary,content_rating,
+            metacritic_score,imdb_rating,rt_score,imdb_id,imdb_top250_rank,providers,runtime_mins,
+            tmdb_vote_average,tmdb_vote_count,0
+          FROM shortlist ORDER BY rowid LIMIT -1 OFFSET ?`).run(shortlistLimit);
+        db.prepare(`DELETE FROM shortlist WHERE id IN (
+          SELECT id FROM shortlist ORDER BY rowid LIMIT -1 OFFSET ?
+        )`).run(shortlistLimit);
+      }
+    }
+    db.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('two_round_pool_migrated','true')").run();
+  })();
+}
 
 module.exports = db;

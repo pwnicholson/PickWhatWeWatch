@@ -7,6 +7,7 @@
   <title>Pick What We Watch</title>
   <link rel="stylesheet" href="/style.css">
   <script defer src="/ui.js"></script>
+  <script defer src="/import-list.js"></script>
   <script defer src="/home.js"></script>
 </head>
 <body>
@@ -23,8 +24,14 @@
     <aside id="source-setup-banner" class="source-banner" hidden>
       <span>No media sources are configured yet.</span> <a href="/admin">Set up Plex, TMDB, or OMDb</a>
     </aside>
+    <aside id="guest-additions-banner" class="source-banner locked-banner" hidden>
+      Host has locked shortlist additions for this session.
+    </aside>
     <section>
-      <label class="search-wrap"><span class="search-icon">⌕</span><input id="search" class="search-input" type="search" placeholder="Search movies and TV shows…" autocomplete="off"></label>
+      <div class="toolbar">
+        <label class="search-wrap"><span class="search-icon">⌕</span><input id="search" class="search-input" type="search" placeholder="Search movies and TV shows…" autocomplete="off"></label>
+        <button id="open-public-import-list" class="button secondary" type="button" hidden>Import List</button>
+      </div>
       <p id="shortlist-full-note" class="full-list-note" hidden>This list is already full! To add more, ask an Admin to remove something first.</p>
       <p id="search-status" class="status" aria-live="polite"></p>
       <div id="search-results" class="grid"></div>
