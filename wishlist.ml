@@ -67,6 +67,8 @@ A living backlog of planned features, distribution improvements, and future enha
 
 ## Watch History, Ratings & Smart Recommendations
 
+- [ ] **Offer Suggestion Sources:**
+  - Offer suggestion sources like IMDB 250, list of Oscar Winners, Oscar Nominees, Letterboxd Top 500 Films, Metacritic top films, etc.
 - [ ] **Explicit "Mark as Watched" & Permanent Exclusion:**
   - Never assume a vote winner was actually watched. Instead, add a **"Mark as Watched"** button on shortlist items (and on `/results`) that removes the title from the active shortlist and logs it to a `watch_history` exclusion list so **Auto-Fill** never recommends it again.
 - [ ] **"Never Recommend / Dislike" & Post-Watch Quick Rating:**
