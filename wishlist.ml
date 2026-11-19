@@ -26,10 +26,13 @@ A living backlog of planned features, distribution improvements, and future enha
 
 ## Media Sources & Poster Handling
 
-- [ ] **Prioritize Local Plex Posters by Default:**
-  - Fix poster resolution so titles matched to a local Plex library default to pulling the user's custom/local Plex poster (`{plexUrl}{thumb}?X-Plex-Token={token}`) whenever available, falling back to TMDB only when no local Plex artwork exists.
+- [ ] **Prioritize Local Plex (or Jellyfin, etcc) Content by Default:**
+  - Titles matched to a local Plex library should default to pulling the user's custom/local Plex poster (`{plexUrl}{thumb}?X-Plex-Token={token}`) whenever available, falling back to TMDB only when no local Plex artwork exists.
+  - Use local Plex library default for pulling the user's custom/local Plex data for genres, actors, directors, etc. whenever available, falling back to TMDB only when no local Plex data exists.
 - [ ] **Jellyfin & Media Server Competitor Support:**
   - Add modular media-server connectors for **Jellyfin**, **Emby**, and **Kodi** alongside Plex so self-hosters running alternative media servers can sync libraries, collections/tags, posters, and deep links.
+  - Pull genres, 
+
 
 ---
 
