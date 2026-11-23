@@ -9,9 +9,9 @@
   <main class="shell">
     <header class="topbar"><a class="brand" href="/">PICK <span>WHAT WE WATCH</span></a><nav class="nav"><a href="/">Shortlist</a><a class="admin-link" href="/admin">Admin</a></nav></header>
     <section class="panel" style="max-width:440px;margin:12vh auto">
-      <div class="eyebrow">Admin settings</div><h1 style="font-size:2rem;margin-top:8px">Enter PIN</h1>
-      <form id="login-form"><label class="field">Admin PIN<input id="pin" type="password" inputmode="numeric" autocomplete="current-password" required></label><button class="button" type="submit">Continue</button></form>
-      <p id="login-status" class="status" aria-live="polite"></p>
+      <div class="eyebrow">Admin settings</div><h1 id="login-heading" style="font-size:2rem;margin-top:8px">Checking PIN setup…</h1>
+      <form id="login-form"><label id="pin-label" class="field">Admin PIN<input id="pin" type="password" autocomplete="current-password" required></label><button class="button" type="submit" disabled>Continue</button></form>
+      <p id="login-status" class="status" aria-live="polite">Checking whether an Admin PIN is configured…</p>
     </section>
   </main>
 </body>

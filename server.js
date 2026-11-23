@@ -14,12 +14,12 @@ const {
   qualifyPlexCandidates
 } = require('./shortlist-fill');
 
-if (!process.env.ADMIN_PIN || !process.env.SESSION_SECRET) {
-  throw new Error('Set ADMIN_PIN and SESSION_SECRET in your .env file.');
+if (!process.env.SESSION_SECRET) {
+  throw new Error('Set SESSION_SECRET in your .env file.');
 }
+if (process.env.RESET_ADMIN_PIN === '1') db.prepare("DELETE FROM settings WHERE key='admin_pin'").run();
 
 const app = express();
-const port = Number(process.env.PORT) || 3000;
 const providers = tmdb.providerOptions;
 
 app.use(express.json({ limit: '100kb' }));
@@ -418,9 +418,16 @@ function savedItemToShortlist(row) {
 }
 
 app.post('/api/admin/login', (req, res) => {
-  if (String(req.body?.pin || '') !== process.env.ADMIN_PIN) {
+  if (!getSetting('admin_pin')) {
+    return res.status(409).json({ error: 'Set an Admin PIN before signing in.' });
+  }
+  if (String(req.body?.pin || '') !== getSetting('admin_pin')) {
     return res.status(401).json({ error: 'Incorrect PIN.' });
   }
+  establishAdminSession(req, res);
+});
+
+function establishAdminSession(req, res) {
   req.session.regenerate(error => {
     if (error) return res.status(500).json({ error: 'Could not create an admin session.' });
     req.session.admin = true;
@@ -428,6 +435,35 @@ app.post('/api/admin/login', (req, res) => {
       if (saveError) return res.status(500).json({ error: 'Could not save the admin session.' });
       res.json({ ok: true });
     });
+  });
+}
+
+app.get('/api/admin/pin-status', (req, res) =>
+  res.json({ configured: Boolean(getSetting('admin_pin')) }));
+
+app.post('/api/admin/setup-pin', (req, res) => {
+  if (getSetting('admin_pin')) {
+    return res.status(409).json({ error: 'An Admin PIN is already configured.' });
+  }
+  const pin = String(req.body?.pin || '');
+  if (pin.length < 4 || pin.length > 64) {
+    return res.status(400).json({ error: 'Admin PIN must be between 4 and 64 characters.' });
+  }
+  setSetting('admin_pin', pin);
+  establishAdminSession(req, res);
+});
+
+app.post('/api/local/reset-pin', (req, res) => {
+  const remoteAddress = req.socket.remoteAddress || '';
+  const address = remoteAddress.startsWith('::ffff:') ? remoteAddress.slice(7) : remoteAddress;
+  if (address !== '127.0.0.1' && address !== '::1') {
+    return res.status(403).json({ error: 'This action is available only from localhost.' });
+  }
+  db.prepare("DELETE FROM settings WHERE key='admin_pin'").run();
+  req.sessionStore.clear(error => {
+    if (error) return res.status(500).json({ error: 'Could not clear admin sessions.' });
+    res.clearCookie('watch-night-admin');
+    res.json({ ok: true });
   });
 });
 
@@ -1322,7 +1358,9 @@ app.get('/api/results', (req, res) => {
 });
 
 app.get('/admin', (req, res, next) => {
-  if (!req.session?.admin) return res.sendFile(path.join(__dirname, 'public', 'admin-login.html'));
+  if (!getSetting('admin_pin') || !req.session?.admin) {
+    return res.sendFile(path.join(__dirname, 'public', 'admin-login.html'));
+  }
   res.sendFile(path.join(__dirname, 'public', 'admin.html'), error => error && next(error));
 });
 app.get('/admin.html', (req, res) => res.redirect('/admin'));
@@ -1336,6 +1374,12 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: error.message || 'Internal server error.' });
 });
 
-app.listen(port, '0.0.0.0', () => {
-  console.log(`Pick What We Watch is running at http://0.0.0.0:${port}`);
-});
+function startServer(port = Number(process.env.PORT) || 3000) {
+  return app.listen(port, '0.0.0.0', () => {
+    console.log(`Pick What We Watch is running at http://0.0.0.0:${port}`);
+  });
+}
+
+if (require.main === module) startServer();
+
+module.exports = { startServer };

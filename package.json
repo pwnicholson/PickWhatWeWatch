@@ -3,9 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "description": "Local family movie and TV night voting",
-  "main": "server.js",
+  "main": "electron-main.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "postinstall": "electron-rebuild",
+    "dist:win": "electron-builder --win"
   },
   "engines": {
     "node": ">=22"
@@ -17,5 +19,35 @@
     "express": "^4.21.2",
     "express-session": "^1.18.1",
     "fast-xml-parser": "^5.12.1"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.1",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.pickwhatwewatch.app",
+    "productName": "Pick What We Watch",
+    "npmRebuild": false,
+    "files": [
+      "**/*",
+      "!data/**",
+      "!dist/**",
+      "!.env"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

@@ -1,5 +1,5 @@
 const db = require('./db');
-const imdbTop250 = require('./data/imdb_top_250.json');
+const imdbTop250 = require('./imdb_top_250.json');
 const tmdb = require('./tmdb');
 
 function storedList(value) {

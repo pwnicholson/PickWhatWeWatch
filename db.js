@@ -4,15 +4,21 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 
 const legacyDataDir = path.join(__dirname, 'data');
-const dataDir = process.platform === 'win32'
-  ? path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'PickWhatWeWatch')
-  : legacyDataDir;
+const dataDir = process.env.DATA_DIR || legacyDataDir;
 fs.mkdirSync(dataDir, { recursive: true });
 
 const dbPath = path.join(dataDir, 'watch-night.sqlite');
-const legacyDbPath = path.join(legacyDataDir, 'watch-night.sqlite');
-if (path.resolve(dbPath) !== path.resolve(legacyDbPath) &&
-    !fs.existsSync(dbPath) && fs.existsSync(legacyDbPath)) {
+const oldWindowsDataDir = path.join(
+  process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+  'PickWhatWeWatch'
+);
+const legacyDbPaths = [
+  ...(process.platform === 'win32' ? [path.join(oldWindowsDataDir, 'watch-night.sqlite')] : []),
+  path.join(legacyDataDir, 'watch-night.sqlite')
+];
+const legacyDbPath = legacyDbPaths.find(candidate =>
+  path.resolve(dbPath) !== path.resolve(candidate) && !fs.existsSync(dbPath) && fs.existsSync(candidate));
+if (legacyDbPath) {
   for (const suffix of ['-shm', '-wal', '-journal']) {
     const destination = `${dbPath}${suffix}`;
     if (fs.existsSync(destination)) fs.unlinkSync(destination);

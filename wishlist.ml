@@ -40,6 +40,10 @@ A living backlog of planned features, distribution improvements, and future enha
 
 - [ ] **QR Code Instant Couch Join (`/admin` & `/vote`):**
   - Display a locally generated QR code on `/admin` pointing to the LAN `/vote` URL so guests can scan the screen with their phones and jump straight into voting.
+- [ ] **3 Rapid Rounds**
+  - Start with voting for Genres (maybe decades?)
+  - Then 'dating app' style quick yes/no for 10 movies that best overlap the genres
+  - Then vote for the top 3 with ranked choice
 - [ ] **"Bonus Round!" Head-to-Head Tie-Breaker + Coin Toss:**
   - When two titles tie for #1 on `/results`, give the group two options:
     1. **Launch Bonus Round:** Open a quick head-to-head runoff ballot featuring *only* the tied contenders.
